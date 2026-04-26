@@ -18,13 +18,10 @@
     "type": "git",
     "url": "https://github.com/syedhaffiz/xfdf-annotator-v1.git"
   },
-
   "type": "module",
-
   "main": "./dist/xfdf-annotator.cjs",
   "module": "./dist/xfdf-annotator.js",
   "types": "./dist/index.d.ts",
-
   "exports": {
     ".": {
       "import": {
@@ -37,27 +34,24 @@
       }
     }
   },
-
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
-
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
     "build:types": "tsc --emitDeclarationOnly --outDir dist",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
+    "prepack": "npm run build",
     "prepublishOnly": "npm run build"
   },
-
   "peerDependencies": {
     "fabric": "^7.3.1",
     "pdfjs-dist": "^5.6.205"
   },
-
   "devDependencies": {
     "fabric": "^7.3.1",
     "pdfjs-dist": "^5.6.205",

@@ -16,6 +16,7 @@
     "emitDeclarationOnly": true,   // Vite handles the actual JS bundling
     "sourceMap": true,
     "outDir": "dist",
+    "rootDir": "src",              // TS 6 requires explicit rootDir for declaration emit
 
     /* ── Interop ────────────────────────────────────────────────── */
     "esModuleInterop": true,

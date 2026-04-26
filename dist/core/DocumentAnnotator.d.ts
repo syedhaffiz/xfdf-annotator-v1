@@ -1,0 +1,38 @@
+import type { DocumentAnnotatorOptions, DocumentType, AnnotationTool, AnnotationMode } from '../types/index';
+export declare class DocumentAnnotator {
+    readonly userId: string;
+    private _opts;
+    private _renderer;
+    private _docType;
+    private _docLabel;
+    private _baseDims;
+    private _currentScale;
+    private _blobURL;
+    private _mode;
+    private _activePageIndex;
+    private _log;
+    private _canvas;
+    private _comments;
+    constructor(options?: DocumentAnnotatorOptions);
+    loadFile(file: File): Promise<void>;
+    loadURL(url: string, type: DocumentType, label?: string): Promise<void>;
+    setMode(mode: AnnotationMode): void;
+    getMode(): AnnotationMode;
+    setTool(tool: AnnotationTool): void;
+    setColor(color: string): void;
+    setStrokeWidth(width: number): void;
+    clearLog(): void;
+    insertImage(file: File): void;
+    save(): string;
+    restore(xfdfString: string): Promise<void>;
+    destroy(): void;
+    private _load;
+    private _buildDOM;
+    private _createPageWrapper;
+    private _getPdfDims;
+    private _bindResize;
+    private _viewerWidth;
+    private _showEmpty;
+    private _showViewport;
+    private _showLoading;
+}

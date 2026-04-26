@@ -12,7 +12,12 @@
       "Read(//e//**)",
       "Bash(npx -y -p @angular/cli@latest ng new xfdf-annotator-angular --routing=false --style=css --skip-git --skip-install --strict --inline-style=false --inline-template=false --ssr=false --defaults)",
       "Read(//e/xfdf-annotator-angular/**)",
-      "Read(//e/xfdf-annotator-angular/src/app/**)"
+      "Read(//e/xfdf-annotator-angular/src/app/**)",
+      "Bash(grep -E \"^\\(pdfjs-dist|fabric\\)$\")",
+      "Bash(timeout 25 npx ng serve --port 4201)",
+      "Bash(timeout 15 npx ng serve --port 4202)",
+      "Bash(npm pack *)",
+      "Bash(npx ng *)"
     ]
   }
 }

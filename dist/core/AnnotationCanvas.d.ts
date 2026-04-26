@@ -1,0 +1,50 @@
+import { Canvas } from 'fabric';
+import type { FabricCanvasJSON } from '../utils/xfdf';
+import type { AnnotationCanvasOptions, AnnotationTool, AnnotationMode, ActivityEntry } from '../types/index';
+export declare class AnnotationCanvas {
+    userId: string;
+    onEvent: (entry: ActivityEntry) => void;
+    onCommentPlace: (pageIndex: number, x: number, y: number, e: MouseEvent) => void;
+    private _pages;
+    private _dirtyPages;
+    private _jsonCache;
+    currentTool: AnnotationTool;
+    strokeColor: string;
+    strokeWidth: number;
+    mode: AnnotationMode;
+    constructor({ userId, onEvent, onCommentPlace }: AnnotationCanvasOptions);
+    createCanvas(canvasEl: HTMLCanvasElement, baseW: number, baseH: number, pageIndex: number, scale: number): Canvas;
+    resize(pageIndex: number, newScale: number): void;
+    destroy(): void;
+    setTool(tool: AnnotationTool): void;
+    setMode(mode: AnnotationMode): void;
+    setColor(color: string): void;
+    setStrokeWidth(w: number): void;
+    insertImage(fileOrUrl: File | string, pageIndex: number): void;
+    private _placeImage;
+    toJSON(): Array<{
+        pageIndex: number;
+        canvasJSON: FabricCanvasJSON | null;
+    }>;
+    loadFromData(pagesData: Array<{
+        pageIndex: number;
+        canvasJSON: FabricCanvasJSON;
+    }>): Promise<void>;
+    private _applyToolTo;
+    private _applyModeTo;
+    private _setupEvents;
+    private _eraseAt;
+    private _makeShapePreview;
+    private _updateShapePreview;
+    private _makeFinalShape;
+    private _makeArrow;
+    private _isValidShape;
+    private _polygonClick;
+    private _hintPolygonClose;
+    private _finalizePolygon;
+    private _cancelPolygon;
+    private _placeText;
+    private _attachMeta;
+    private _markDirty;
+    private _fireEvent;
+}

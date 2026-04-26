@@ -10,7 +10,9 @@ export default defineConfig({
     // This is what lets library consumers get full type-checking and IntelliSense.
     dts({
       include: ['src'],
-      rollupTypes: true, // Merge all .d.ts files into a single declaration bundle
+      // rollupTypes:true silently produced an empty bundle in this setup —
+      // emit per-file declarations instead. The package.json `types` entry
+      // (./dist/index.d.ts) reaches the rest via re-exports.
       tsconfigPath: './tsconfig.json',
     }),
   ],
