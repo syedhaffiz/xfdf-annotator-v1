@@ -1,11 +1,24 @@
-import { fabric } from 'fabric'
+import {
+  Canvas,
+  Rect,
+  Ellipse,
+  Line,
+  Path,
+  Polygon,
+  IText,
+  Circle,
+  FabricImage,
+  FabricObject,
+  PencilBrush,
+} from 'fabric'
+import type { TPointerEventInfo, TPointerEvent } from 'fabric'
 import { generateUUID } from '../utils/utils'
 import type { FabricCanvasJSON } from '../utils/xfdf'
 import type { AnnotationCanvasOptions, AnnotationTool, AnnotationMode, ActivityEntry } from '../types/index'
 
 // ── Custom fabric object properties ──────────────────────────────
 
-interface AnnotationObject extends fabric.Object {
+interface AnnotationObject extends FabricObject {
   objectId?:   string
   createdBy?:  string
   timestamp?:  number
@@ -24,20 +37,20 @@ interface AnnotationObject extends fabric.Object {
 interface PolyState {
   active:     boolean
   points:     Array<{ x: number; y: number }>
-  helpers:    fabric.Object[]
-  rubberband: fabric.Line | null
+  helpers:    FabricObject[]
+  rubberband: Line | null
 }
 
 interface DrawState {
   active: boolean
   start:  { x: number; y: number } | null
-  shape:  fabric.Object | null
+  shape:  FabricObject | null
 }
 
 interface EraseState { active: boolean }
 
 interface PageState {
-  fc:           fabric.Canvas
+  fc:           Canvas
   baseW:        number
   baseH:        number
   poly:         PolyState
@@ -81,20 +94,19 @@ export class AnnotationCanvas {
     baseH:    number,
     pageIndex: number,
     scale:    number
-  ): fabric.Canvas {
+  ): Canvas {
     const physW = Math.round(baseW * scale)
     const physH = Math.round(baseH * scale)
 
-    const fc = new fabric.Canvas(canvasEl, {
+    const fc = new Canvas(canvasEl, {
       width:  physW,
       height: physH,
       selection: true,
       preserveObjectStacking: true,
-    });
+    })
 
-    // wrapperEl exists at runtime but is not in @types/fabric 5.x
-    (fc as unknown as { wrapperEl: HTMLElement }).wrapperEl.style.cssText =
-      'position:absolute;top:0;left:0;'
+    // wrapperEl is properly typed as HTMLDivElement on SelectableCanvas in fabric 7
+    fc.wrapperEl.style.cssText = 'position:absolute;top:0;left:0;'
     fc.setZoom(scale)
 
     const pageState: PageState = {
@@ -177,17 +189,18 @@ export class AnnotationCanvas {
     const p = this._pages[pageIndex]
     if (!p) return
     if (typeof fileOrUrl === 'string') {
-      this._placeImage(fileOrUrl, p, pageIndex)
+      void this._placeImage(fileOrUrl, p, pageIndex)
     } else {
       const reader   = new FileReader()
-      reader.onload  = (e) => this._placeImage(e.target?.result as string, p, pageIndex)
+      reader.onload  = (e) => { void this._placeImage(e.target?.result as string, p, pageIndex) }
       reader.onerror = () => console.error('Failed to read image file')
       reader.readAsDataURL(fileOrUrl)
     }
   }
 
-  private _placeImage(dataUrl: string, p: PageState, pageIndex: number): void {
-    fabric.Image.fromURL(dataUrl, (img) => {
+  private async _placeImage(dataUrl: string, p: PageState, pageIndex: number): Promise<void> {
+    try {
+      const img = await FabricImage.fromURL(dataUrl)
       const maxW = p.baseW * 0.4
       if ((img.width ?? 0) > maxW) img.scale(maxW / (img.width ?? 1))
 
@@ -216,7 +229,9 @@ export class AnnotationCanvas {
       }
       if (meta.objectId !== undefined) imgEntry.objectId = meta.objectId
       this.onEvent(imgEntry)
-    })
+    } catch (err) {
+      console.error('Failed to load image:', err)
+    }
   }
 
   // ── Serialization ─────────────────────────────────────────────────
@@ -227,51 +242,49 @@ export class AnnotationCanvas {
       if (!this._dirtyPages.has(i) && this._jsonCache.has(i)) {
         return { pageIndex: i, canvasJSON: this._jsonCache.get(i) ?? null }
       }
-      const json = p.fc.toJSON(CUSTOM_PROPS) as FabricCanvasJSON
+      // fabric 7: toJSON() takes no args; use toObject(propertiesToInclude) for custom props
+      const json = p.fc.toObject(CUSTOM_PROPS) as FabricCanvasJSON
       this._jsonCache.set(i, json)
       this._dirtyPages.delete(i)
       return { pageIndex: i, canvasJSON: json }
     })
   }
 
-  loadFromData(pagesData: Array<{ pageIndex: number; canvasJSON: FabricCanvasJSON }>): Promise<void> {
+  async loadFromData(pagesData: Array<{ pageIndex: number; canvasJSON: FabricCanvasJSON }>): Promise<void> {
     this._dirtyPages.clear()
     this._jsonCache.clear()
 
-    const promises = pagesData.map(({ pageIndex, canvasJSON }) => {
-      if (!canvasJSON) return Promise.resolve()
+    const promises = pagesData.map(async ({ pageIndex, canvasJSON }) => {
+      if (!canvasJSON) return
       const p = this._pages[pageIndex]
-      if (!p) return Promise.resolve()
+      if (!p) return
 
-      return new Promise<void>((resolve) => {
-        p.fc.loadFromJSON(
-          canvasJSON,
-          () => {
-            const isEdit = this.mode === 'edit'
-            p.fc.getObjects().forEach((obj) => {
-              obj.selectable = isEdit && this.currentTool === 'select'
-              obj.evented    = isEdit
-            })
-            p.fc.renderAll()
-            this._jsonCache.set(pageIndex, canvasJSON)
-            resolve()
-          },
-          (serialized: Record<string, unknown>, obj: fabric.Object) => {
-            CUSTOM_PROPS.forEach((prop) => {
-              if (serialized[prop] !== undefined) {
-                (obj as AnnotationObject & Record<string, unknown>)[prop] = serialized[prop]
-              }
-            })
-          }
-        )
+      await p.fc.loadFromJSON(
+        canvasJSON as unknown as Record<string, unknown>,
+        <T>(serialized: Record<string, unknown>, instance: T | undefined) => {
+          if (!instance) return
+          CUSTOM_PROPS.forEach((prop) => {
+            if (serialized[prop] !== undefined) {
+              (instance as unknown as Record<string, unknown>)[prop] = serialized[prop]
+            }
+          })
+        }
+      )
+
+      const isEdit = this.mode === 'edit'
+      p.fc.getObjects().forEach((obj) => {
+        obj.selectable = isEdit && this.currentTool === 'select'
+        obj.evented    = isEdit
       })
+      p.fc.renderAll()
+      this._jsonCache.set(pageIndex, canvasJSON)
     })
-    return Promise.all(promises).then(() => undefined)
+    await Promise.all(promises)
   }
 
   // ── Private: tool application ─────────────────────────────────────
 
-  private _applyToolTo(fc: fabric.Canvas): void {
+  private _applyToolTo(fc: Canvas): void {
     if (this.mode === 'view') { this._applyModeTo(fc); return }
 
     const tool    = this.currentTool
@@ -281,7 +294,7 @@ export class AnnotationCanvas {
     fc.selection     = (tool === 'select')
 
     if (tool === 'freehand') {
-      fc.freeDrawingBrush       = new fabric.PencilBrush(fc)
+      fc.freeDrawingBrush       = new PencilBrush(fc)
       fc.freeDrawingBrush.color = this.strokeColor
       fc.freeDrawingBrush.width = this.strokeWidth
       fc.defaultCursor          = 'crosshair'
@@ -308,7 +321,7 @@ export class AnnotationCanvas {
     fc.renderAll()
   }
 
-  private _applyModeTo(fc: fabric.Canvas): void {
+  private _applyModeTo(fc: Canvas): void {
     fc.isDrawingMode = false
     fc.selection     = false
     fc.getObjects().forEach((obj) => {
@@ -324,8 +337,8 @@ export class AnnotationCanvas {
   private _setupEvents(pageState: PageState, pageIndex: number): void {
     const { fc, poly, draw, erase } = pageState
 
-    fc.on('path:created', (e: fabric.IEvent) => {
-      const path = (e as unknown as { path: AnnotationObject }).path
+    fc.on('path:created', (e: { path: FabricObject }) => {
+      const path = e.path as AnnotationObject
       if (!path) return
       this._attachMeta(path, 'freehand', pageIndex)
       path.selectable = (this.currentTool === 'select')
@@ -333,9 +346,9 @@ export class AnnotationCanvas {
       this._fireEvent('added', 'freehand', path, pageIndex)
     })
 
-    fc.on('mouse:down', (opt: fabric.IEvent) => {
+    fc.on('mouse:down', (opt: TPointerEventInfo) => {
       if (this.mode === 'view') return
-      const ptr = fc.getPointer(opt.e)
+      const ptr = opt.scenePoint
 
       switch (this.currentTool) {
         case 'eraser':
@@ -347,16 +360,16 @@ export class AnnotationCanvas {
         case 'line':
         case 'arrow':
           draw.active = true
-          draw.start  = ptr
-          draw.shape  = this._makeShapePreview(this.currentTool, ptr)
+          draw.start  = { x: ptr.x, y: ptr.y }
+          draw.shape  = this._makeShapePreview(this.currentTool, draw.start)
           if (draw.shape) fc.add(draw.shape)
           break
         case 'polygon':
-          this._polygonClick(pageState, pageIndex, ptr, opt.e as MouseEvent)
+          this._polygonClick(pageState, pageIndex, { x: ptr.x, y: ptr.y }, opt.e as MouseEvent)
           break
         case 'text':
           if ((opt.target as AnnotationObject | undefined)?.type === 'i-text') break
-          this._placeText(fc, ptr, pageIndex)
+          this._placeText(fc, { x: ptr.x, y: ptr.y }, pageIndex)
           break
         case 'comment':
           if (opt.target) break
@@ -365,7 +378,7 @@ export class AnnotationCanvas {
       }
     })
 
-    fc.on('mouse:move', (opt: fabric.IEvent) => {
+    fc.on('mouse:move', (opt: TPointerEventInfo) => {
       if (this.mode === 'view') return
 
       if (this.currentTool === 'eraser' && erase.active) {
@@ -375,26 +388,26 @@ export class AnnotationCanvas {
 
       if (!draw.active || !draw.shape) {
         if (this.currentTool === 'polygon' && poly.active && poly.rubberband) {
-          const ptr = fc.getPointer(opt.e)
+          const ptr = opt.scenePoint
           poly.rubberband.set({ x2: ptr.x, y2: ptr.y })
           fc.renderAll()
         }
         return
       }
 
-      const ptr = fc.getPointer(opt.e)
-      if (draw.start) this._updateShapePreview(draw.shape, this.currentTool, draw.start, ptr)
+      const ptr = opt.scenePoint
+      if (draw.start) this._updateShapePreview(draw.shape, this.currentTool, draw.start, { x: ptr.x, y: ptr.y })
       fc.renderAll()
     })
 
-    fc.on('mouse:up', (opt: fabric.IEvent) => {
+    fc.on('mouse:up', (opt: TPointerEventInfo) => {
       if (this.mode === 'view') return
 
       erase.active = false
       if (!draw.active) return
       draw.active = false
 
-      const ptr   = fc.getPointer(opt.e)
+      const ptr   = opt.scenePoint
       if (draw.shape) { fc.remove(draw.shape); draw.shape = null }
 
       const tool  = this.currentTool
@@ -404,7 +417,7 @@ export class AnnotationCanvas {
       if (!(['rectangle', 'circle', 'line', 'arrow'] as AnnotationTool[]).includes(tool)) return
       if (!start) return
 
-      const finalShape = this._makeFinalShape(tool, start, ptr)
+      const finalShape = this._makeFinalShape(tool, start, { x: ptr.x, y: ptr.y })
       if (!finalShape || !this._isValidShape(finalShape, tool)) return
 
       this._attachMeta(finalShape as AnnotationObject, tool, pageIndex)
@@ -429,8 +442,9 @@ export class AnnotationCanvas {
 
   // ── Private: eraser ───────────────────────────────────────────────
 
-  private _eraseAt(fc: fabric.Canvas, nativeEvent: Event, pageIndex: number): void {
-    const target = fc.findTarget(nativeEvent, false) as AnnotationObject | undefined
+  private _eraseAt(fc: Canvas, nativeEvent: TPointerEvent, pageIndex: number): void {
+    const result = fc.findTarget(nativeEvent)
+    const target = result?.target as AnnotationObject | undefined
     if (!target || target._helper) return
 
     const meta: ActivityEntry = {
@@ -456,7 +470,7 @@ export class AnnotationCanvas {
   private _makeShapePreview(
     tool:  AnnotationTool,
     start: { x: number; y: number }
-  ): fabric.Object | null {
+  ): FabricObject | null {
     const base = {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
       fill: 'transparent', selectable: false, evented: false,
@@ -464,19 +478,19 @@ export class AnnotationCanvas {
     }
     switch (tool) {
       case 'rectangle':
-        return new fabric.Rect({ ...base, left: start.x, top: start.y, width: 0, height: 0 })
+        return new Rect({ ...base, left: start.x, top: start.y, width: 0, height: 0 })
       case 'circle':
-        return new fabric.Ellipse({ ...base, left: start.x, top: start.y, rx: 0, ry: 0, originX: 'left', originY: 'top' })
+        return new Ellipse({ ...base, left: start.x, top: start.y, rx: 0, ry: 0, originX: 'left', originY: 'top' })
       case 'line':
       case 'arrow':
-        return new fabric.Line([start.x, start.y, start.x, start.y], { ...base, fill: undefined })
+        return new Line([start.x, start.y, start.x, start.y], { ...base, fill: null })
       default:
         return null
     }
   }
 
   private _updateShapePreview(
-    shape:   fabric.Object,
+    shape:   FabricObject,
     tool:    AnnotationTool,
     start:   { x: number; y: number },
     current: { x: number; y: number }
@@ -489,7 +503,7 @@ export class AnnotationCanvas {
         height: Math.abs(current.y - start.y),
       })
     } else if (tool === 'circle') {
-      const ellipse = shape as fabric.Ellipse
+      const ellipse = shape as Ellipse
       ellipse.set({
         left: Math.min(start.x, current.x),
         top:  Math.min(start.y, current.y),
@@ -497,7 +511,7 @@ export class AnnotationCanvas {
         ry:   Math.abs(current.y - start.y) / 2,
       })
     } else if (tool === 'line' || tool === 'arrow') {
-      (shape as fabric.Line).set({ x2: current.x, y2: current.y })
+      (shape as Line).set({ x2: current.x, y2: current.y })
     }
     shape.setCoords()
   }
@@ -508,28 +522,28 @@ export class AnnotationCanvas {
     tool:  AnnotationTool,
     start: { x: number; y: number },
     end:   { x: number; y: number }
-  ): fabric.Object | null {
+  ): FabricObject | null {
     const base = {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
       fill: 'transparent', selectable: false, evented: false, strokeUniform: true,
     }
     switch (tool) {
       case 'rectangle':
-        return new fabric.Rect({
+        return new Rect({
           ...base,
           left: Math.min(start.x, end.x), top: Math.min(start.y, end.y),
           width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y),
         })
       case 'circle':
-        return new fabric.Ellipse({
+        return new Ellipse({
           ...base,
           left: Math.min(start.x, end.x), top: Math.min(start.y, end.y),
           rx: Math.abs(end.x - start.x) / 2, ry: Math.abs(end.y - start.y) / 2,
           originX: 'left', originY: 'top',
         })
       case 'line':
-        return new fabric.Line([start.x, start.y, end.x, end.y], {
-          ...base, fill: undefined, strokeLineCap: 'round',
+        return new Line([start.x, start.y, end.x, end.y], {
+          ...base, fill: null, strokeLineCap: 'round',
         })
       case 'arrow':
         return this._makeArrow(start, end)
@@ -541,7 +555,7 @@ export class AnnotationCanvas {
   private _makeArrow(
     start: { x: number; y: number },
     end:   { x: number; y: number }
-  ): fabric.Object | null {
+  ): FabricObject | null {
     const dx  = end.x - start.x
     const dy  = end.y - start.y
     const len = Math.hypot(dx, dy)
@@ -558,22 +572,22 @@ export class AnnotationCanvas {
     const rx = bx - px * head * 0.4, ry = by - py * head * 0.4
 
     const d = `M ${start.x} ${start.y} L ${stopX} ${stopY} M ${lx} ${ly} L ${end.x} ${end.y} L ${rx} ${ry}`
-    return new fabric.Path(d, {
+    return new Path(d, {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
       fill: 'transparent', strokeLineCap: 'round', strokeLineJoin: 'round',
       strokeUniform: true, selectable: false, evented: false,
     })
   }
 
-  private _isValidShape(shape: fabric.Object, tool: AnnotationTool): boolean {
+  private _isValidShape(shape: FabricObject, tool: AnnotationTool): boolean {
     if (!shape) return false
     if (tool === 'rectangle') return (shape.width  ?? 0) > MIN_SIZE || (shape.height ?? 0) > MIN_SIZE
     if (tool === 'circle') {
-      const e = shape as fabric.Ellipse
+      const e = shape as Ellipse
       return (e.rx ?? 0) > MIN_SIZE || (e.ry ?? 0) > MIN_SIZE
     }
     if (tool === 'line') {
-      const l = shape as fabric.Line
+      const l = shape as Line
       const dx = (l.x2 ?? 0) - (l.x1 ?? 0)
       const dy = (l.y2 ?? 0) - (l.y1 ?? 0)
       return Math.hypot(dx, dy) > MIN_SIZE
@@ -584,9 +598,9 @@ export class AnnotationCanvas {
   // ── Private: polygon ──────────────────────────────────────────────
 
   private _polygonClick(
-    pageState:   PageState,
-    pageIndex:   number,
-    ptr:         { x: number; y: number },
+    pageState:    PageState,
+    pageIndex:    number,
+    ptr:          { x: number; y: number },
     _nativeEvent: MouseEvent
   ): void {
     const { fc, poly } = pageState
@@ -605,7 +619,7 @@ export class AnnotationCanvas {
     poly.points.push({ x: ptr.x, y: ptr.y })
 
     const dotR = 4 / zoom
-    const dot  = new fabric.Circle({
+    const dot  = new Circle({
       left: ptr.x - dotR, top: ptr.y - dotR, radius: dotR,
       fill: this.strokeColor, stroke: '#fff', strokeWidth: 1 / zoom,
       selectable: false, evented: false,
@@ -616,7 +630,7 @@ export class AnnotationCanvas {
 
     if (poly.points.length > 1) {
       const prev = poly.points[poly.points.length - 2]
-      const seg  = new fabric.Line([prev.x, prev.y, ptr.x, ptr.y], {
+      const seg  = new Line([prev.x, prev.y, ptr.x, ptr.y], {
         stroke: this.strokeColor, strokeWidth: this.strokeWidth,
         selectable: false, evented: false, strokeLineCap: 'round',
       });
@@ -626,7 +640,7 @@ export class AnnotationCanvas {
     }
 
     if (!poly.rubberband) {
-      poly.rubberband = new fabric.Line([ptr.x, ptr.y, ptr.x, ptr.y], {
+      poly.rubberband = new Line([ptr.x, ptr.y, ptr.x, ptr.y], {
         stroke: this.strokeColor, strokeWidth: this.strokeWidth,
         strokeDashArray: [6 / zoom, 4 / zoom],
         selectable: false, evented: false,
@@ -645,13 +659,13 @@ export class AnnotationCanvas {
   }
 
   private _hintPolygonClose(
-    fc:       fabric.Canvas,
+    fc:       Canvas,
     firstPt:  { x: number; y: number },
     zoom:     number,
     pageState: PageState
   ): void {
     const r    = 10 / zoom
-    const hint = new fabric.Circle({
+    const hint = new Circle({
       left: firstPt.x - r, top: firstPt.y - r, radius: r,
       fill: 'transparent', stroke: this.strokeColor,
       strokeWidth: 1.5 / zoom, strokeDashArray: [3 / zoom, 3 / zoom],
@@ -663,14 +677,14 @@ export class AnnotationCanvas {
     fc.renderAll()
   }
 
-  private _finalizePolygon(pageState: PageState, fc: fabric.Canvas, pageIndex: number): void {
+  private _finalizePolygon(pageState: PageState, fc: Canvas, pageIndex: number): void {
     const { poly } = pageState
     if (poly.points.length < 3) { this._cancelPolygon(pageState); return }
 
     poly.helpers.forEach((h) => fc.remove(h))
     if (poly.rubberband) fc.remove(poly.rubberband)
 
-    const polygon = new fabric.Polygon(poly.points, {
+    const polygon = new Polygon(poly.points, {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
       fill: 'transparent', strokeUniform: true,
       selectable: false, evented: false,
@@ -698,8 +712,8 @@ export class AnnotationCanvas {
 
   // ── Private: text tool ────────────────────────────────────────────
 
-  private _placeText(fc: fabric.Canvas, ptr: { x: number; y: number }, pageIndex: number): void {
-    const itext = new fabric.IText('', {
+  private _placeText(fc: Canvas, ptr: { x: number; y: number }, pageIndex: number): void {
+    const itext = new IText('', {
       left: ptr.x, top: ptr.y,
       fontFamily: 'Inter, -apple-system, sans-serif',
       fontSize: 18, fill: this.strokeColor,

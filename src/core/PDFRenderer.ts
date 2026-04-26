@@ -6,7 +6,7 @@ import type { IRenderer, PageDimensions } from '../types/index'
 // Consumers can override pdfjsLib.GlobalWorkerOptions.workerSrc before calling PDFRenderer.load().
 if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
   pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs'
 }
 
 interface PdfDims {
@@ -59,7 +59,8 @@ export class PDFRenderer implements IRenderer {
 
     this._renderTasks[pageIndex]?.cancel()
 
-    const task = page.render({ canvasContext: ctx, viewport: layoutVP })
+    // pdfjs-dist 5.x requires the `canvas` parameter in addition to canvasContext
+    const task = page.render({ canvasContext: ctx, canvas: canvasEl, viewport: layoutVP })
     this._renderTasks[pageIndex] = task
 
     try {

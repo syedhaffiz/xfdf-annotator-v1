@@ -30,15 +30,6 @@
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": true,
 
-    /* ── Path Aliases ───────────────────────────────────────────── */
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"],
-      "@core/*": ["src/core/*"],
-      "@utils/*": ["src/utils/*"],
-      "@types/*": ["src/types/*"]
-    },
-
     /* ── Skip lib check to avoid noise from third-party .d.ts ─── */
     "skipLibCheck": true
   },

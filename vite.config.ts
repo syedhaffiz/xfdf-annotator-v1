@@ -15,14 +15,6 @@ export default defineConfig({
     }),
   ],
 
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-      '@core': resolve(__dirname, 'src/core'),
-      '@utils': resolve(__dirname, 'src/utils'),
-    },
-  },
-
   build: {
     // "lib" mode tells Vite to build an importable library rather than
     // a standalone web app. It skips the HTML entry point entirely.
