@@ -17,7 +17,8 @@
       "Bash(timeout 25 npx ng serve --port 4201)",
       "Bash(timeout 15 npx ng serve --port 4202)",
       "Bash(npm pack *)",
-      "Bash(npx ng *)"
+      "Bash(npx ng *)",
+      "Bash(npm view *)"
     ]
   }
 }
