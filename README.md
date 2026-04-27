@@ -4,6 +4,8 @@ A lightweight, browser-based PDF and image annotation library that saves and loa
 
 Built on top of [Fabric.js](http://fabricjs.com/) for canvas rendering and [PDF.js](https://mozilla.github.io/pdf.js/) for PDF support. Ships as an ESM + CJS package with TypeScript types.
 
+> **Reference implementation:** A complete, production-style Angular host app — toolbar, activity log, comment threads, asset palette, drag-and-drop, theme toggle, PDF thumbnails, and zoom — lives at **[github.com/syedhaffiz/xfdf-annotator-angular](https://github.com/syedhaffiz/xfdf-annotator-angular)**. Use it as a worked example when wiring this library into your own framework.
+
 ---
 
 ## Features
@@ -366,7 +368,7 @@ export class App implements AfterViewInit, OnDestroy {
 }
 ```
 
-The recommended pattern is to wrap the annotator in an injectable service that exposes mutable state (tool, mode, color, stroke width) as Angular signals — see the reference implementation in [`xfdf-annotator-angular`](../xfdf-annotator-angular).
+The recommended pattern is to wrap the annotator in an injectable service that exposes mutable state (tool, mode, color, stroke width) as Angular signals — see the reference implementation at [`syedhaffiz/xfdf-annotator-angular`](https://github.com/syedhaffiz/xfdf-annotator-angular).
 
 ### React
 
