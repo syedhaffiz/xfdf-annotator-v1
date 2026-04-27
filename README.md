@@ -1,132 +1,213 @@
 # xfdf-annotator
 
-A lightweight, browser-based PDF and image annotation tool that saves and loads annotations using the **XFDF standard** (ISO 19444-1 / Adobe XFDF Specification).
+A lightweight, browser-based PDF and image annotation library that saves and loads annotations using the **XFDF standard** (ISO 19444-1 / Adobe XFDF Specification).
 
-Built with [Fabric.js](http://fabricjs.com/) for canvas rendering and [PDF.js](https://mozilla.github.io/pdf.js/) for PDF support.
+Built on top of [Fabric.js](http://fabricjs.com/) for canvas rendering and [PDF.js](https://mozilla.github.io/pdf.js/) for PDF support. Ships as an ESM + CJS package with TypeScript types.
 
 ---
 
 ## Features
 
 - **Multi-format support** — Open PDFs (multi-page) and raster images (PNG, JPG, JPEG, GIF, WebP, SVG, BMP)
-- **Annotation tools** — Freehand, Rectangle, Ellipse, Line, Arrow, Polygon, Text, Image stamp, Eraser
-- **Figma-style comments** — Click anywhere to place a comment pin and start a thread
-- **XFDF save/load** — Export annotations as standard XFDF XML; reload them on the same document
-- **Activity log** — Real-time sidebar feed of every draw/erase action
-- **Responsive** — Automatically re-renders at the correct scale when the viewer panel resizes
+- **Annotation tools** — Select, Freehand, Rectangle, Ellipse, Line, Arrow, Polygon, Text, Image stamp, Eraser
+- **Figma-style comments** — Click anywhere to drop a numbered pin and start a reply thread
+- **XFDF save / load** — Export annotations as standard XFDF XML; reload them on the same document with full fidelity
+- **Activity log** — Real-time sidebar feed of every draw / erase / comment action (also persisted in XFDF)
+- **Responsive** — Auto re-renders at the correct scale when the viewer panel resizes (`ResizeObserver`)
 - **HiDPI** — PDF pages render at `displayScale × devicePixelRatio` for crisp retina output
 - **View / Edit modes** — Lock the canvas for read-only review or enable full editing
+- **Framework-agnostic** — Plain DOM API; works in Angular, React, Vue, Svelte, or vanilla apps
 
 ---
 
-## Project Structure
+## Installation
+
+```bash
+npm install xfdf-annotator fabric pdfjs-dist
+```
+
+`fabric` and `pdfjs-dist` are declared as peer dependencies — install them in the host application.
+
+The package ships:
+
+- `dist/xfdf-annotator.js` — ESM entry (`"module"`)
+- `dist/xfdf-annotator.cjs` — CommonJS entry (`"main"`)
+- `dist/index.d.ts` — TypeScript type definitions
+
+---
+
+## Project Structure (source)
 
 ```
-js/
-├── main.js                     # Entry point — wires DOM events to DocumentAnnotator
+src/
+├── index.ts                       # Public exports
 ├── core/
-│   ├── DocumentAnnotator.js    # Top-level orchestrator (load, save, restore, resize)
-│   ├── AnnotationCanvas.js     # Per-page Fabric.js canvas + all drawing tools
-│   ├── PDFRenderer.js          # HiDPI PDF.js wrapper
-│   ├── ImageRenderer.js        # Image loader (mirrors PDFRenderer interface)
-│   ├── ActivityLog.js          # Sidebar event feed
-│   └── CommentManager.js       # Comment pins + floating thread panel
+│   ├── DocumentAnnotator.ts       # Top-level orchestrator (load, save, restore, resize)
+│   ├── AnnotationCanvas.ts        # Per-page Fabric.js canvas + all drawing tools
+│   ├── PDFRenderer.ts             # HiDPI PDF.js wrapper
+│   ├── ImageRenderer.ts           # Image loader (mirrors PDFRenderer interface)
+│   ├── ActivityLog.ts             # Sidebar event feed
+│   └── CommentManager.ts          # Comment pins + floating thread panel
+├── types/
+│   └── index.ts                   # Public type definitions
 └── utils/
-    ├── utils.js                # UUID, debounce, date helpers, document-type detection
-    └── xfdf.js                 # XFDF serialiser / deserialiser
+    ├── utils.ts                   # UUID, debounce, date helpers, document-type detection
+    └── xfdf.ts                    # XFDF serialiser / deserialiser
 ```
 
 ---
 
-## Getting Started
+## Quickstart
 
-### Prerequisites
+```ts
+import { DocumentAnnotator } from 'xfdf-annotator';
 
-The tool runs entirely in the browser with no build step. You need a static file server (e.g. VS Code Live Server, `npx serve`, or any web server) because ES modules require HTTP/HTTPS.
+// Construct AFTER the host DOM (the IDs below) exists.
+const annotator = new DocumentAnnotator({
+  displayScale: 1.5,         // optional — base CSS scale (× devicePixelRatio for backing pixels)
+  userId:       'haffiz',    // optional — random UUID generated if omitted
+});
 
-Include these CDN scripts in your HTML **before** the module entry point:
+// Open a file
+fileInput.addEventListener('change', async (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (file) await annotator.loadFile(file);
+});
+
+// Or open from a URL
+await annotator.loadURL('/sample.pdf', 'pdf', 'Sample.pdf');
+
+// Tool / style / mode
+annotator.setTool('rectangle');
+annotator.setColor('#e74c3c');
+annotator.setStrokeWidth(3);
+annotator.setMode('view');           // lock canvas for read-only review
+
+// Save / restore
+const xml = annotator.save();        // XFDF XML string
+await annotator.restore(xml);        // hydrates pages + comments + log
+
+// Tear down
+annotator.destroy();
+```
+
+---
+
+## PDF.js Worker
+
+`PDFRenderer` initialises `pdfjsLib.GlobalWorkerOptions.workerSrc` to a CDN URL **only if it isn't already set**:
+
+```text
+https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs
+```
+
+CDNs occasionally lag behind `pdfjs-dist` releases. The recommended pattern is to ship the worker with your app and pin it before any document loads:
+
+```ts
+import * as pdfjsLib from 'pdfjs-dist';
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.mjs';
+```
+
+Copy `node_modules/pdfjs-dist/build/pdf.worker.min.mjs` into your app's static assets folder (`/public/`, `assets/`, etc.) as part of your build.
+
+---
+
+## Required DOM Scaffold
+
+`DocumentAnnotator` reaches into the DOM by **element ID** — your framework's job is to render the scaffold and then construct the annotator after the view exists.
+
+| ID (default) | Purpose | Required |
+|----|----|----|
+| `viewer-panel` | Outer panel observed by `ResizeObserver` for auto-rescale | yes |
+| `pages-container` | Container where page wrappers (`.page-wrapper`) get injected | yes |
+| `document-viewport` | Scrollable viewport shown after a document loads | yes |
+| `empty-state` | "No document loaded" placeholder | optional |
+| `loading-overlay` | Spinner shown during load | optional |
+| `log-entries` | Activity log list — must exist at construction time, otherwise events are silently dropped | yes (if you use the log) |
+| `comment-thread-panel` | Floating thread reader (needs `.ctp-pin-num`, `.ctp-messages`, `.ctp-close`, `.ctp-reply-input`, `.ctp-reply-btn` children) | yes (if you use comments) |
+| `new-comment-popup` | New-comment composer (needs `<textarea>`, `#btn-post-comment`, `#btn-cancel-comment` children) | yes (if you use comments) |
+| `doc-title` / `doc-meta` | Filename + page-count display written by the library after load | optional |
+| `toolbar-panel` | Your toolbar — gets `.view-mode` class added/removed when `setMode()` is called | optional |
+
+All IDs are configurable via `DocumentAnnotatorOptions` (see [API Reference](#api-reference)).
+
+A minimal scaffold:
 
 ```html
-<!-- PDF.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<!-- Fabric.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+<main id="viewer-panel">
+  <div id="empty-state">Open a PDF or image to start annotating</div>
+  <div id="loading-overlay" style="display:none;">Loading…</div>
+  <div id="document-viewport" style="display:none;">
+    <div id="pages-container"></div>
+  </div>
+</main>
 
-<!-- App entry point -->
-<script type="module" src="js/main.js"></script>
+<aside><div id="log-entries"></div></aside>
+
+<div id="comment-thread-panel" style="display:none;">
+  <div class="ctp-header">
+    <span class="ctp-pin-num"></span>
+    <button class="ctp-close" aria-label="Close">×</button>
+  </div>
+  <div class="ctp-messages"></div>
+  <div class="ctp-reply-bar">
+    <input class="ctp-reply-input" placeholder="Reply…" />
+    <button class="ctp-reply-btn">Send</button>
+  </div>
+</div>
+
+<div id="new-comment-popup" style="display:none;">
+  <textarea placeholder="Add a comment…"></textarea>
+  <button id="btn-cancel-comment">Cancel</button>
+  <button id="btn-post-comment">Post</button>
+</div>
 ```
 
-### Required DOM IDs
-
-`DocumentAnnotator` and `main.js` expect the following IDs in your HTML:
-
-| ID | Purpose |
-|----|---------|
-| `viewer-panel` | Outer panel observed by ResizeObserver |
-| `pages-container` | Container where page wrappers are injected |
-| `log-entries` | Activity log list |
-| `empty-state` | "No document loaded" placeholder |
-| `loading-overlay` | Spinner shown during load |
-| `document-viewport` | Scrollable viewport shown after load |
-| `comment-thread-panel` | Floating comment thread panel |
-| `new-comment-popup` | Popup for composing a new comment |
-| `user-id-display` | Badge showing the current session's user ID |
-| `doc-title` | Document filename display |
-| `doc-meta` | Page count / dimensions display |
-| `file-input` | `<input type="file">` for opening documents |
-| `image-insert-input` | `<input type="file" accept="image/*">` for stamping images |
-| `xfdf-input` | `<input type="file" accept=".xfdf">` for loading annotations |
-| `btn-open-file` | Open file button |
-| `btn-open-empty` | Alternative open button |
-| `btn-save` | Save XFDF button |
-| `btn-load-xfdf` | Load XFDF button |
-| `btn-clear-log` | Clear activity log button |
-| `color-picker` | `<input type="color">` |
-| `brush-size` | `<input type="range">` for stroke width |
-| `brush-size-val` | Text display of current brush size |
-| `polygon-hint` | Hint banner shown when polygon tool is active |
-| `toast-container` | Container for toast notifications |
-| `toolbar-panel` | Toolbar element (gets `.view-mode` class in view mode) |
-
-Toolbar mode buttons use `data-mode="view"` / `data-mode="edit"` (class `.mode-btn`).  
-Tool buttons use `data-tool="<tool>"` (class `.tool-btn`).
+The library ships **no styles** — you own the visual treatment.
 
 ---
 
 ## Annotation Tools
 
-| Key | Tool | Description |
-|-----|------|-------------|
-| `V` | Select | Move, resize, or delete existing annotations |
-| `P` | Freehand | Free-draw ink strokes |
-| `L` | Line | Straight line segment |
-| `A` | Arrow | Line with arrowhead |
-| `R` | Rectangle | Outlined rectangle |
-| `C` | Circle | Outlined ellipse |
-| `G` | Polygon | Click to place vertices; click near the first point (or press **Enter**) to close; **Escape** to cancel |
-| `T` | Text | Click to place an editable text label |
-| `M` | Comment | Click to drop a numbered comment pin |
-| `E` | Eraser | Click an annotation to remove it |
-| `I` | Image | Insert an image file onto the current page |
+Pass a tool name to `annotator.setTool(...)`. The `key` column is the convention used by the Angular reference app — the library doesn't bind shortcuts itself.
+
+| Key | Tool name | Description |
+|---|---|---|
+| V | `'select'` | Move, resize, or delete existing annotations |
+| P | `'freehand'` | Free-draw ink strokes (Fabric `PencilBrush`) |
+| L | `'line'` | Click-drag straight line |
+| A | `'arrow'` | Click-drag line with arrowhead |
+| R | `'rectangle'` | Click-drag outlined rectangle |
+| C | `'circle'` | Click-drag outlined ellipse |
+| G | `'polygon'` | Click to place vertices; click near the first point (or **Enter**) to close; **Escape** to cancel |
+| T | `'text'` | Click to place an editable text label (commits on blur, removed if empty) |
+| M | `'comment'` | Click empty space to drop a numbered comment pin and open the new-comment popup |
+| E | `'eraser'` | Click an annotation to remove it |
+| I | `'image'` | Stamp an image file onto the active page (typically wired to a hidden file picker) |
+
+A minimum-size guard (`MIN_SIZE = 4`) prevents accidental tiny shapes; sub-threshold drags are dropped.
 
 ---
 
 ## XFDF Format
 
-Annotations are persisted in standard XFDF XML with two sections:
+Annotations are persisted as standard XFDF XML with three custom extensions:
 
-### Standard `<annots>` block
-Interoperable with Adobe Acrobat, Foxit, and other XFDF-aware readers. Contains basic geometry for:
-`ink`, `square`, `circle`, `line`, `polyline`, `polygon`, `freetext`
+### `<annots>` — standard XFDF block
 
-### `ext:canvas-data` extension
-A lossless Fabric.js JSON snapshot per page, embedded in `CDATA`. This is the primary restore path — guarantees pixel-perfect round-trips including images and styled text.
+Interoperable with Adobe Acrobat, Foxit, and other XFDF-aware readers. Contains basic geometry for: `ink`, `square`, `circle`, `line`, `polyline`, `polygon`, `freetext`. Coordinates are in PDF coordinate space (origin bottom-left, Y up).
 
-### `ext:comments` extension
-Serialised comment threads (pin position, messages, resolved state).
+### `ext:canvas-data` — Fabric.js snapshot extension
 
-### `ext:log` extension
-Activity log entries for audit trails.
+A lossless Fabric.js JSON snapshot per page, embedded in `CDATA`. This is the **primary restore path** — it guarantees pixel-perfect round-trips including images, opacity, and styled text. `restore()` uses this when present and falls back to `<annots>` only if the extension is missing.
+
+### `ext:comments` — comment threads
+
+Serialised comment pins with their messages, resolved state, and the running counter. Pin coordinates are stored in *base* (unzoomed) page space so they reposition correctly when the canvas re-scales.
+
+### `ext:log` — activity log
+
+Activity log entries for an audit trail. After a `restore()`, the log re-populates from the saved entries automatically.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -135,13 +216,13 @@ Activity log entries for audit trails.
       xml:space="preserve">
   <f href="my-document.pdf"/>
   <annots>
-    <square page="0" name="..." color="#e74c3c" width="3" rect="50,700,200,650"/>
+    <square page="0" name="…" color="#e74c3c" width="3" rect="50,700,200,650"/>
   </annots>
   <ext:canvas-data>
-    <ext:page index="0"><![CDATA[{ ... fabric JSON ... }]]></ext:page>
+    <ext:page index="0"><![CDATA[{ …fabric JSON… }]]></ext:page>
   </ext:canvas-data>
-  <ext:comments counter="1"> ... </ext:comments>
-  <ext:log><![CDATA[[ ... log entries ... ]]]></ext:log>
+  <ext:comments counter="1"> … </ext:comments>
+  <ext:log><![CDATA[[ … log entries … ]]]></ext:log>
 </xfdf>
 ```
 
@@ -151,115 +232,208 @@ Activity log entries for audit trails.
 
 ### `DocumentAnnotator`
 
-```js
-import { DocumentAnnotator } from './core/DocumentAnnotator.js';
+```ts
+import { DocumentAnnotator } from 'xfdf-annotator';
 
-const annotator = new DocumentAnnotator(options);
+const annotator = new DocumentAnnotator(options?);
 ```
 
-**Constructor options** (all optional, defaults shown):
+**Constructor options** (`DocumentAnnotatorOptions`, all optional, defaults shown):
 
-```js
+```ts
 {
-  viewerPanelId:      'viewer-panel',
-  pagesContainerId:   'pages-container',
-  logContainerId:     'log-entries',
-  emptyStateId:       'empty-state',
-  loadingId:          'loading-overlay',
-  viewportId:         'document-viewport',
-  threadPanelId:      'comment-thread-panel',
-  newCommentPopupId:  'new-comment-popup',
+  // DOM IDs
+  viewerPanelId:     'viewer-panel',
+  pagesContainerId:  'pages-container',
+  logContainerId:    'log-entries',
+  emptyStateId:      'empty-state',
+  loadingId:         'loading-overlay',
+  viewportId:        'document-viewport',
+  threadPanelId:     'comment-thread-panel',
+  newCommentPopupId: 'new-comment-popup',
+
+  // Display
+  displayScale:      1.5,    // base CSS scale before devicePixelRatio
+  userId:            '',     // random UUID generated if omitted
 }
 ```
 
-**Methods:**
+**Methods**
 
 | Method | Description |
-|--------|-------------|
+|---|---|
 | `loadFile(file: File): Promise<void>` | Open a PDF or image File object |
-| `loadURL(url, type, label?): Promise<void>` | Open a document from a URL (`type`: `'pdf'` or `'image'`) |
-| `setMode(mode: 'edit'|'view')` | Switch between edit and view mode |
-| `getMode(): string` | Get current mode |
-| `setTool(tool: string)` | Activate a drawing tool |
-| `setColor(color: string)` | Set stroke/fill color (CSS hex) |
-| `setStrokeWidth(width: number)` | Set stroke width in base units |
-| `insertImage(file: File)` | Stamp an image onto the active page |
-| `save(): string` | Export all annotations as an XFDF XML string |
+| `loadURL(url, type, label?): Promise<void>` | Open from a URL — `type` is `'pdf'` or `'image'` |
+| `setMode(mode: 'edit' \| 'view'): void` | Switch interaction mode |
+| `getMode(): 'edit' \| 'view'` | Current mode |
+| `setTool(tool: AnnotationTool): void` | Activate a drawing tool (no-op in view mode) |
+| `setColor(color: string): void` | CSS hex stroke/fill colour |
+| `setStrokeWidth(width: number): void` | Stroke width in base units (px at scale 1) |
+| `insertImage(file: File): void` | Stamp an image onto the active page (no-op in view mode) |
+| `save(): string` | Export annotations as XFDF XML |
 | `restore(xfdfString: string): Promise<void>` | Import annotations from XFDF |
-| `clearLog()` | Clear the activity log |
-| `destroy()` | Tear down all canvases and free resources |
-
----
+| `clearLog(): void` | Empty the activity log |
+| `destroy(): void` | Tear down all canvases and free resources |
+| `userId: string` *(readonly)* | This session's user ID |
 
 ### `AnnotationCanvas`
 
-Manages one `fabric.Canvas` instance per document page. Created internally by `DocumentAnnotator`.
+Internal class — managed by `DocumentAnnotator`. Exposed for advanced consumers who want to embed individual page canvases.
 
-```js
-import { AnnotationCanvas } from './core/AnnotationCanvas.js';
+```ts
+import { AnnotationCanvas } from 'xfdf-annotator';
 
 const canvas = new AnnotationCanvas({ userId, onEvent, onCommentPlace });
 ```
 
 Key methods: `createCanvas`, `resize`, `destroy`, `setTool`, `setMode`, `setColor`, `setStrokeWidth`, `insertImage`, `toJSON`, `loadFromData`.
 
----
+### `PDFRenderer` and `ImageRenderer`
 
-### XFDF Utilities
+Both implement the `IRenderer` interface and can be used directly if you need to render thumbnails or an outline panel using the same loaded document:
 
-```js
-import { toXFDF, fromXFDF } from './utils/xfdf.js';
+```ts
+interface IRenderer {
+  readonly pageCount: number;
+  renderPage(pageIndex: number, canvas: HTMLCanvasElement): Promise<{ width: number; height: number }>;
+  destroy(): void;
+}
+```
 
-// Serialise
+### XFDF utilities
+
+```ts
+import { toXFDF, fromXFDF } from 'xfdf-annotator';
+
 const xml = toXFDF({ docId, pages, comments, log });
-
-// Deserialise
 const { pages, comments, log } = fromXFDF(xmlString);
+```
+
+### Other utilities
+
+```ts
+import {
+  generateUUID,    // () => string                — UUID v4 with crypto.randomUUID fallback
+  debounce,        // <T>(fn, delay) => T          — trailing-edge debounce
+  formatTime,      // (ts: number) => string       — locale time string
+  getDocumentType, // (s: string) => 'pdf' | 'image' | null
+  toPdfDate,       // (ts: number) => string       — 'D:YYYYMMDDHHmmss'
+  fromPdfDate,     // (s: string)  => number       — ms since epoch
+} from 'xfdf-annotator';
+```
+
+### Type exports
+
+The library re-exports every type used in its public surface:
+
+```ts
+import type {
+  DocumentType, PageDimensions, IRenderer,
+  AnnotationTool, AnnotationMode,
+  XFDFRect, XFDFVertex, XFDFAnnotation, XFDFPageData,
+  XFDFDocument, XFDFSerialiseInput,
+  CommentMessage, CommentThread,
+  ActivityEntry,
+  AnnotatorDOMOptions, DocumentAnnotatorOptions,
+  AnnotationEventHandler, CommentPlaceHandler,
+  AnnotationCanvasOptions,
+} from 'xfdf-annotator';
 ```
 
 ---
 
-### Utility Functions (`utils/utils.js`)
+## Framework Integration
 
-| Function | Description |
-|----------|-------------|
-| `generateUUID()` | Returns a UUID v4 string |
-| `debounce(fn, delay)` | Returns a debounced version of `fn` |
-| `formatTime(ts)` | Formats a timestamp to a locale time string |
-| `getDocumentType(nameOrMime)` | Returns `'pdf'`, `'image'`, or `null` |
-| `toPdfDate(ts)` | Converts a JS timestamp to PDF date string (`D:YYYYMMDDHHmmss`) |
-| `fromPdfDate(str)` | Parses a PDF date string back to a JS timestamp |
+### Angular
+
+`DocumentAnnotator` queries the DOM by ID at construction, so initialise after `ngAfterViewInit` and tear down in `ngOnDestroy`:
+
+```ts
+import { AfterViewInit, Component, OnDestroy, inject } from '@angular/core';
+import { DocumentAnnotator } from 'xfdf-annotator';
+
+@Component({ selector: 'app-root', templateUrl: './app.html' })
+export class App implements AfterViewInit, OnDestroy {
+  private annotator: DocumentAnnotator | null = null;
+
+  ngAfterViewInit(): void {
+    this.annotator = new DocumentAnnotator();
+  }
+
+  ngOnDestroy(): void {
+    this.annotator?.destroy();
+  }
+}
+```
+
+The recommended pattern is to wrap the annotator in an injectable service that exposes mutable state (tool, mode, color, stroke width) as Angular signals — see the reference implementation in [`xfdf-annotator-angular`](../xfdf-annotator-angular).
+
+### React
+
+Mount in a `useEffect` so the DOM scaffold exists before construction. Destroy in the cleanup:
+
+```tsx
+import { useEffect, useRef } from 'react';
+import { DocumentAnnotator } from 'xfdf-annotator';
+
+export function Annotator() {
+  const ref = useRef<DocumentAnnotator | null>(null);
+
+  useEffect(() => {
+    const a = new DocumentAnnotator();
+    ref.current = a;
+    return () => { a.destroy(); ref.current = null; };
+  }, []);
+
+  return (
+    <main id="viewer-panel">
+      <div id="empty-state">Open a PDF or image to start annotating</div>
+      <div id="loading-overlay" style={{ display: 'none' }}>Loading…</div>
+      <div id="document-viewport" style={{ display: 'none' }}>
+        <div id="pages-container" />
+      </div>
+      {/* …log-entries, comment-thread-panel, new-comment-popup… */}
+    </main>
+  );
+}
+```
+
+For state propagation (so the toolbar reflects the active tool, etc.) wrap the annotator in a Context provider exposing `useState` setters that proxy to the underlying methods.
 
 ---
 
 ## Coordinate Systems
 
 | System | Origin | Y direction | Units |
-|--------|--------|-------------|-------|
+|---|---|---|---|
 | Screen / Fabric | Top-left | Down ↓ | px (= PDF pts at scale 1) |
-| XFDF / PDF | Bottom-left | Up ↑ | PDF pts |
+| XFDF / PDF | Bottom-left | Up ↑ | PDF points |
 
 Conversion:
-- **screen → PDF:** `pdfY = pageHeight − screenY`
-- **PDF → screen:** `screenY = pageHeight − pdfY`
+
+- screen → PDF: `pdfY = pageHeight − screenY`
+- PDF → screen: `screenY = pageHeight − pdfY`
+
+The serialiser flips Y on save, and `loadFromData` uses Fabric snapshots that already live in screen space — so application code rarely needs to think about this.
 
 ---
 
 ## Performance Notes
 
-- **Parallel PDF page loading** — all page objects are fetched with `Promise.all` (O(1) vs sequential O(n))
-- **Progressive rendering** — page 1 renders first so content is visible immediately; remaining pages render in parallel in the background
-- **Dirty-page serialisation** — `AnnotationCanvas.toJSON()` only re-serialises pages that have been modified since the last save; clean pages return a cached JSON object
-- **Cancellable render tasks** — stale PDF render tasks are cancelled on resize so rapid window resizing doesn't pile up work
-- **XFDF string building** — uses array + `join` rather than DOM construction (10–50× faster for large annotation sets)
-- **Single-reflow DOM build** — all page wrappers are collected into a `DocumentFragment` and appended in one operation
+- **Parallel PDF page loading** — page proxies fetched with `Promise.all` (O(1) round trips vs. sequential O(n))
+- **Progressive rendering** — page 1 paints first so the viewport is interactive immediately; remaining pages render in parallel in the background
+- **Dirty-page serialisation** — `AnnotationCanvas.toJSON()` only re-serialises pages modified since the last save; clean pages return cached JSON
+- **Cancellable PDF render tasks** — stale tasks are cancelled on resize so rapid resizing doesn't pile up work
+- **String-builder XFDF** — `toXFDF` builds via array + `join` rather than DOM construction; 10–50× faster for large annotation sets
+- **Single-reflow DOM build** — page wrappers collected into a `DocumentFragment` and appended in one operation
 
 ---
 
 ## Browser Support
 
 Requires a modern browser with support for:
-- ES Modules (`import`/`export`)
+
+- ES Modules (`import` / `export`)
 - `ResizeObserver`
 - `DOMParser` / `XMLSerializer`
 - `FileReader` / `Blob` / `URL.createObjectURL`
