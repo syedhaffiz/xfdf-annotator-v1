@@ -1,6 +1,6 @@
 {
   "name": "xfdf-annotator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lightweight browser-based PDF and image annotation library using the XFDF standard (ISO 19444-1)",
   "author": "",
   "license": "MIT",
