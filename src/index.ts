@@ -1,5 +1,6 @@
 export { DocumentAnnotator } from './core/DocumentAnnotator'
 export { AnnotationCanvas } from './core/AnnotationCanvas'
+export type { LineStyle } from './core/AnnotationCanvas'
 export { PDFRenderer } from './core/PDFRenderer'
 export { ImageRenderer } from './core/ImageRenderer'
 export { ActivityLog } from './core/ActivityLog'
@@ -12,6 +13,7 @@ export type {
   IRenderer,
   AnnotationTool,
   AnnotationMode,
+  User,
   XFDFRect,
   XFDFVertex,
   XFDFAnnotation,

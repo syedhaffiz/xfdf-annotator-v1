@@ -1,12 +1,13 @@
 import type { XFDFCommentsState } from '../utils/xfdf';
+import type { User } from '../types/index';
 interface CommentManagerOptions {
-    userId: string;
+    user: User;
     pagesContainerId: string;
     threadPanelId: string;
     newPopupId: string;
 }
 export declare class CommentManager {
-    private userId;
+    private _user;
     private _pagesContainerId;
     private _comments;
     private _pinEls;
@@ -16,7 +17,7 @@ export declare class CommentManager {
     private _pendingPlacement;
     private _panel;
     private _popup;
-    constructor({ userId, pagesContainerId, threadPanelId, newPopupId }: CommentManagerOptions);
+    constructor({ user, pagesContainerId, threadPanelId, newPopupId }: CommentManagerOptions);
     startPlacement(pageIndex: number, baseX: number, baseY: number, nativeEvent: MouseEvent): void;
     repositionAll(scale: number): void;
     setInteractive(interactive: boolean): void;
@@ -40,6 +41,12 @@ export declare class CommentManager {
     private _bindPopupEvents;
     private _submitComment;
     private _shortId;
+    /**
+     * Pick the best human-readable label for a comment author. Persisted
+     * `userName` wins; otherwise we fall back to a truncated id so legacy
+     * XFDF (saved before userName was added) still renders.
+     */
+    private _renderUser;
     private _safe;
 }
 export {};

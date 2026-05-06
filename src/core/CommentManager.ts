@@ -1,15 +1,16 @@
 import { generateUUID, formatTime } from '../utils/utils'
 import type { XFDFCommentData, XFDFCommentMessage, XFDFCommentsState } from '../utils/xfdf'
+import type { User } from '../types/index'
 
 interface CommentManagerOptions {
-  userId:           string
+  user:             User
   pagesContainerId: string
   threadPanelId:    string
   newPopupId:       string
 }
 
 export class CommentManager {
-  private userId:            string
+  private _user:             User
   private _pagesContainerId: string
   private _comments:         Map<string, XFDFCommentData>
   private _pinEls:           Map<string, HTMLElement>
@@ -20,8 +21,8 @@ export class CommentManager {
   private _panel: HTMLElement | null
   private _popup: HTMLElement | null
 
-  constructor({ userId, pagesContainerId, threadPanelId, newPopupId }: CommentManagerOptions) {
-    this.userId            = userId
+  constructor({ user, pagesContainerId, threadPanelId, newPopupId }: CommentManagerOptions) {
+    this._user             = user
     this._pagesContainerId = pagesContainerId
     this._comments         = new Map()
     this._pinEls           = new Map()
@@ -164,7 +165,7 @@ export class CommentManager {
     msgEl.innerHTML = comment.messages.map((m: XFDFCommentMessage) => `
       <div class="ctp-message">
         <div class="ctp-msg-header">
-          <span class="ctp-msg-user">${this._shortId(m.userId)}</span>
+          <span class="ctp-msg-user" title="${this._safe(m.userId ?? '')}">${this._safe(this._renderUser(m.userId, m.userName))}</span>
           <span class="ctp-msg-time">${formatTime(m.timestamp)}</span>
         </div>
         <div class="ctp-msg-text">${this._safe(m.text ?? '')}</div>
@@ -227,7 +228,8 @@ export class CommentManager {
       if (!comment) return
       comment.messages.push({
         id:        generateUUID(),
-        userId:    this.userId,
+        userId:    this._user.id,
+        userName:  this._user.displayName,
         text,
         timestamp: Date.now(),
       })
@@ -307,7 +309,8 @@ export class CommentManager {
       resolved: false,
       messages: [{
         id:        generateUUID(),
-        userId:    this.userId,
+        userId:    this._user.id,
+        userName:  this._user.displayName,
         text,
         timestamp: Date.now(),
       }],
@@ -322,6 +325,16 @@ export class CommentManager {
 
   private _shortId(id: string | null): string {
     return id ? id.slice(0, 8) + '…' : '?'
+  }
+
+  /**
+   * Pick the best human-readable label for a comment author. Persisted
+   * `userName` wins; otherwise we fall back to a truncated id so legacy
+   * XFDF (saved before userName was added) still renders.
+   */
+  private _renderUser(id: string | null, name?: string | null | undefined): string {
+    if (name && name.trim()) return name
+    return this._shortId(id)
   }
 
   private _safe(str: string): string {

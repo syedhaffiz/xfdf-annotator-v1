@@ -142,7 +142,10 @@ function A({ docId: e, pages: t, comments: n, log: r }) {
 		i.push(`<ext:comments counter="${n.counter ?? 0}">`);
 		for (let e of n.comments ?? []) {
 			i.push(`<ext:comment id="${y(e.id)}" page="${e.pageIndex}" baseX="${b(e.baseX)}" baseY="${b(e.baseY)}" number="${e.number}" resolved="${+!!e.resolved}">`);
-			for (let t of e.messages) i.push(`<ext:message id="${y(t.id)}" userId="${y(t.userId)}" timestamp="${w(t.timestamp)}">${y(t.text)}</ext:message>`);
+			for (let t of e.messages) {
+				let e = t.userName ? ` userName="${y(t.userName)}"` : "";
+				i.push(`<ext:message id="${y(t.id)}" userId="${y(t.userId)}"${e} timestamp="${w(t.timestamp)}">${y(t.text)}</ext:message>`);
+			}
 			i.push("</ext:comment>");
 		}
 		i.push("</ext:comments>");
@@ -177,6 +180,7 @@ function j(e) {
 			for (let t of e.getElementsByTagNameNS(v, "message")) n.push({
 				id: t.getAttribute("id"),
 				userId: t.getAttribute("userId"),
+				userName: t.getAttribute("userName"),
 				text: t.textContent,
 				timestamp: T(t.getAttribute("timestamp"))
 			});
@@ -346,8 +350,7 @@ function M(e) {
 }
 //#endregion
 //#region src/core/PDFRenderer.ts
-e.GlobalWorkerOptions.workerSrc || (e.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs");
-var N = class {
+var N = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs", P = class {
 	_pdf = null;
 	_baseViewports = [];
 	_pdfPages = [];
@@ -357,6 +360,7 @@ var N = class {
 		return this._pageCount;
 	}
 	async load(t) {
+		e.GlobalWorkerOptions.workerSrc || (e.GlobalWorkerOptions.workerSrc = N);
 		let n = e.getDocument({
 			url: t,
 			cMapPacked: !0
@@ -415,7 +419,7 @@ var N = class {
 	destroy() {
 		this._renderTasks.forEach((e) => e?.cancel()), this._pdf &&= (this._pdf.destroy(), null), this._baseViewports = [], this._pdfPages = [], this._renderTasks = [], this._pageCount = 0;
 	}
-}, P = class {
+}, F = class {
 	naturalWidth = 0;
 	naturalHeight = 0;
 	url = null;
@@ -457,17 +461,45 @@ var N = class {
 	destroy() {
 		this.url = null, this.naturalWidth = 0, this.naturalHeight = 0;
 	}
-}, F = [
+}, I = [
 	"objectId",
 	"createdBy",
 	"timestamp",
 	"actionType",
 	"tool",
 	"pageIndex"
-], I = 4, L = 14, R = class {
-	userId;
+], L = 4, R = 14, z = 6;
+function B(e, t, n, r, i, a, o) {
+	let s = r - t, c = i - n, l = Math.max(1, Math.round(Math.hypot(s, c) / (a * 2)));
+	for (let r = 1; r <= l; r++) {
+		let i = r / l, u = (t + i * s).toFixed(2), d = (n + i * c).toFixed(2);
+		e.push(`A ${a} ${a} 0 0 ${o} ${u} ${d}`);
+	}
+}
+function V(e, t, n = z) {
+	let r = ["M 0 0"];
+	return B(r, 0, 0, e, 0, n, 0), B(r, e, 0, e, t, n, 0), B(r, e, t, 0, t, n, 0), B(r, 0, t, 0, 0, n, 0), r.push("Z"), r.join(" ");
+}
+function H(e, t, n = z) {
+	let r = ["M 0 0"];
+	return B(r, 0, 0, e, t, n, 1), r.join(" ");
+}
+function U(e, t = z) {
+	if (e.length < 2) return "";
+	let n = Math.min(...e.map((e) => e.x)), r = Math.min(...e.map((e) => e.y)), i = e.map((e) => ({
+		x: e.x - n,
+		y: e.y - r
+	})), a = [`M ${i[0].x.toFixed(2)} ${i[0].y.toFixed(2)}`];
+	for (let e = 0; e < i.length - 1; e++) B(a, i[e].x, i[e].y, i[e + 1].x, i[e + 1].y, t, 0);
+	return B(a, i[i.length - 1].x, i[i.length - 1].y, i[0].x, i[0].y, t, 0), a.push("Z"), a.join(" ");
+}
+var W = class {
+	user;
 	onEvent;
 	onCommentPlace;
+	get userId() {
+		return this.user.id;
+	}
 	_pages;
 	_dirtyPages;
 	_jsonCache;
@@ -475,8 +507,12 @@ var N = class {
 	strokeColor = "#e74c3c";
 	strokeWidth = 3;
 	mode = "edit";
-	constructor({ userId: e, onEvent: t, onCommentPlace: n }) {
-		this.userId = e, this.onEvent = t, this.onCommentPlace = n ?? (() => {}), this._pages = [], this._dirtyPages = /* @__PURE__ */ new Set(), this._jsonCache = /* @__PURE__ */ new Map();
+	fillColor = "#4a90e2";
+	fillOpacity = 0;
+	dashArray = [];
+	lineStyle = "solid";
+	constructor({ user: e, onEvent: t, onCommentPlace: n }) {
+		this.user = e, this.onEvent = t, this.onCommentPlace = n ?? (() => {}), this._pages = [], this._dirtyPages = /* @__PURE__ */ new Set(), this._jsonCache = /* @__PURE__ */ new Map();
 	}
 	createCanvas(e, n, r, i, a) {
 		let o = new t(e, {
@@ -537,6 +573,26 @@ var N = class {
 			t && t.fc.isDrawingMode && t.fc.freeDrawingBrush && (t.fc.freeDrawingBrush.width = e);
 		});
 	}
+	setFillColor(e) {
+		this.fillColor = e;
+	}
+	setFillOpacity(e) {
+		this.fillOpacity = Math.max(0, Math.min(1, Number.isFinite(e) ? e : 0));
+	}
+	setDashArray(e) {
+		this.dashArray = Array.isArray(e) ? [...e] : [];
+	}
+	setLineStyle(e) {
+		this.lineStyle = e;
+	}
+	_computeFill() {
+		if (this.fillOpacity <= 0) return "transparent";
+		let e = this.fillColor, t = parseInt(e.slice(1, 3), 16), n = parseInt(e.slice(3, 5), 16), r = parseInt(e.slice(5, 7), 16);
+		return Number.isNaN(t) || Number.isNaN(n) || Number.isNaN(r) ? "transparent" : `rgba(${t},${n},${r},${this.fillOpacity})`;
+	}
+	_activeDash() {
+		return this.dashArray.length > 0 ? [...this.dashArray] : null;
+	}
 	insertImage(e, t) {
 		let n = this._pages[t];
 		if (n) if (typeof e == "string") this._placeImage(e, n, t);
@@ -559,7 +615,8 @@ var N = class {
 				description: `Inserted image on page ${n + 1}`,
 				action: "added",
 				tool: "image",
-				userId: this.userId,
+				userId: this.user.id,
+				userName: this.user.displayName,
 				timestamp: o.timestamp ?? Date.now(),
 				pageIndex: n
 			};
@@ -578,7 +635,7 @@ var N = class {
 				pageIndex: t,
 				canvasJSON: this._jsonCache.get(t) ?? null
 			};
-			let n = e.fc.toObject(F);
+			let n = e.fc.toObject(I);
 			return this._jsonCache.set(t, n), this._dirtyPages.delete(t), {
 				pageIndex: t,
 				canvasJSON: n
@@ -592,7 +649,7 @@ var N = class {
 			let n = this._pages[e];
 			if (!n) return;
 			await n.fc.loadFromJSON(t, (e, t) => {
-				t && F.forEach((n) => {
+				t && I.forEach((n) => {
 					e[n] !== void 0 && (t[n] = e[n]);
 				});
 			});
@@ -628,7 +685,9 @@ var N = class {
 		let { fc: n, poly: r, draw: i, erase: a } = e;
 		n.on("path:created", (e) => {
 			let n = e.path;
-			n && (this._attachMeta(n, "freehand", t), n.selectable = this.currentTool === "select", n.evented = !0, this._fireEvent("added", "freehand", n, t));
+			if (!n) return;
+			let r = this._activeDash();
+			r && n.set({ strokeDashArray: r }), this._attachMeta(n, "freehand", t), n.selectable = this.currentTool === "select", n.evented = !0, this._fireEvent("added", "freehand", n, t);
 		}), n.on("mouse:down", (r) => {
 			if (this.mode === "view") return;
 			let o = r.scenePoint;
@@ -715,7 +774,8 @@ var N = class {
 			description: `Erased on page ${n + 1}`,
 			action: "removed",
 			tool: r.tool ?? "eraser",
-			userId: this.userId,
+			userId: this.user.id,
+			userName: this.user.displayName,
 			timestamp: Date.now(),
 			pageIndex: n
 		};
@@ -725,7 +785,8 @@ var N = class {
 		let n = {
 			stroke: this.strokeColor,
 			strokeWidth: this.strokeWidth,
-			fill: "transparent",
+			fill: this._computeFill(),
+			strokeDashArray: this._activeDash(),
 			selectable: !1,
 			evented: !1,
 			strokeUniform: !0,
@@ -778,24 +839,38 @@ var N = class {
 		}), e.setCoords();
 	}
 	_makeFinalShape(e, t, n) {
-		let i = {
+		let i = this._computeFill(), a = this._activeDash(), c = {
 			stroke: this.strokeColor,
 			strokeWidth: this.strokeWidth,
-			fill: "transparent",
+			fill: i,
+			strokeDashArray: a,
 			selectable: !1,
 			evented: !1,
 			strokeUniform: !0
 		};
+		if (this.lineStyle === "arc" && (e === "rectangle" || e === "line")) {
+			let r = Math.min(t.x, n.x), i = Math.min(t.y, n.y), a = Math.abs(n.x - t.x), o = Math.abs(n.y - t.y), l = r + a / 2, u = i + o / 2, d = e === "rectangle" ? V(a, o) : H(n.x - t.x, n.y - t.y);
+			if (!d) return null;
+			let f = new s(d, {
+				...c,
+				strokeLineCap: "round",
+				strokeLineJoin: "round"
+			});
+			return f.setPositionByOrigin({
+				x: l,
+				y: u
+			}, "center", "center"), f.setCoords(), f;
+		}
 		switch (e) {
 			case "rectangle": return new u({
-				...i,
+				...c,
 				left: Math.min(t.x, n.x),
 				top: Math.min(t.y, n.y),
 				width: Math.abs(n.x - t.x),
 				height: Math.abs(n.y - t.y)
 			});
 			case "circle": return new r({
-				...i,
+				...c,
 				left: Math.min(t.x, n.x),
 				top: Math.min(t.y, n.y),
 				rx: Math.abs(n.x - t.x) / 2,
@@ -809,7 +884,7 @@ var N = class {
 				n.x,
 				n.y
 			], {
-				...i,
+				...c,
 				fill: null,
 				strokeLineCap: "round"
 			});
@@ -819,12 +894,13 @@ var N = class {
 	}
 	_makeArrow(e, t) {
 		let n = t.x - e.x, r = t.y - e.y, i = Math.hypot(n, r);
-		if (i < I) return null;
-		let a = n / i, o = r / i, c = -o, l = a, u = Math.max(L, this.strokeWidth * 4), d = t.x - a * u * .7, f = t.y - o * u * .7, p = t.x - a * u, m = t.y - o * u, h = p + c * u * .4, g = m + l * u * .4, _ = p - c * u * .4, v = m - l * u * .4;
+		if (i < L) return null;
+		let a = n / i, o = r / i, c = -o, l = a, u = Math.max(R, this.strokeWidth * 4), d = t.x - a * u * .7, f = t.y - o * u * .7, p = t.x - a * u, m = t.y - o * u, h = p + c * u * .4, g = m + l * u * .4, _ = p - c * u * .4, v = m - l * u * .4;
 		return new s(`M ${e.x} ${e.y} L ${d} ${f} M ${h} ${g} L ${t.x} ${t.y} L ${_} ${v}`, {
 			stroke: this.strokeColor,
 			strokeWidth: this.strokeWidth,
 			fill: "transparent",
+			strokeDashArray: this._activeDash(),
 			strokeLineCap: "round",
 			strokeLineJoin: "round",
 			strokeUniform: !0,
@@ -834,14 +910,14 @@ var N = class {
 	}
 	_isValidShape(e, t) {
 		if (!e) return !1;
-		if (t === "rectangle") return (e.width ?? 0) > I || (e.height ?? 0) > I;
+		if (t === "rectangle") return (e.width ?? 0) > L || (e.height ?? 0) > L;
 		if (t === "circle") {
 			let t = e;
-			return (t.rx ?? 0) > I || (t.ry ?? 0) > I;
+			return (t.rx ?? 0) > L || (t.ry ?? 0) > L;
 		}
 		if (t === "line") {
 			let t = e, n = (t.x2 ?? 0) - (t.x1 ?? 0), r = (t.y2 ?? 0) - (t.y1 ?? 0);
-			return Math.hypot(n, r) > I;
+			return Math.hypot(n, r) > L;
 		}
 		return !0;
 	}
@@ -922,17 +998,35 @@ var N = class {
 			return;
 		}
 		r.helpers.forEach((e) => t.remove(e)), r.rubberband && t.remove(r.rubberband);
-		let i = new l(r.points, {
+		let i = this._computeFill(), a = this._activeDash(), o;
+		if (this.lineStyle === "arc") {
+			let e = Math.min(...r.points.map((e) => e.x)), t = Math.max(...r.points.map((e) => e.x)), n = Math.min(...r.points.map((e) => e.y)), c = Math.max(...r.points.map((e) => e.y)), l = (e + t) / 2, u = (n + c) / 2, d = new s(U(r.points), {
+				stroke: this.strokeColor,
+				strokeWidth: this.strokeWidth,
+				fill: i,
+				strokeDashArray: a,
+				strokeLineCap: "round",
+				strokeLineJoin: "round",
+				strokeUniform: !0,
+				selectable: !1,
+				evented: !1
+			});
+			d.setPositionByOrigin({
+				x: l,
+				y: u
+			}, "center", "center"), d.setCoords(), o = d;
+		} else o = new l(r.points, {
 			stroke: this.strokeColor,
 			strokeWidth: this.strokeWidth,
-			fill: "transparent",
+			fill: i,
+			strokeDashArray: a,
 			strokeUniform: !0,
 			selectable: !1,
 			evented: !1,
 			objectCaching: !1,
 			strokeLineJoin: "round"
 		});
-		this._attachMeta(i, "polygon", n), i.selectable = this.currentTool === "select", t.add(i), t.renderAll(), this._fireEvent("added", "polygon", i, n), r.active = !1, r.points = [], r.helpers = [], r.rubberband = null;
+		this._attachMeta(o, "polygon", n), o.selectable = this.currentTool === "select", t.add(o), t.renderAll(), this._fireEvent("added", "polygon", o, n), r.active = !1, r.points = [], r.helpers = [], r.rubberband = null;
 	}
 	_cancelPolygon(e) {
 		let { fc: t, poly: n } = e;
@@ -964,7 +1058,7 @@ var N = class {
 		});
 	}
 	_attachMeta(e, t, n) {
-		e.objectId = d(), e.createdBy = this.userId, e.timestamp = Date.now(), e.actionType = "draw", e.tool = t, e.pageIndex = n, this._dirtyPages.add(n);
+		e.objectId = d(), e.createdBy = this.user.id, e.timestamp = Date.now(), e.actionType = "draw", e.tool = t, e.pageIndex = n, this._dirtyPages.add(n);
 	}
 	_markDirty(e) {
 		this._dirtyPages.add(e);
@@ -975,13 +1069,14 @@ var N = class {
 			description: `${e === "added" ? "Drew" : "Removed"} ${t} on page ${r + 1}`,
 			action: e,
 			tool: t,
-			userId: this.userId,
+			userId: this.user.id,
+			userName: this.user.displayName,
 			timestamp: n.timestamp ?? Date.now(),
 			pageIndex: r
 		};
 		n.objectId !== void 0 && (i.objectId = n.objectId), this.onEvent(i);
 	}
-}, z = class {
+}, G = class {
 	_container;
 	_events = [];
 	constructor(e) {
@@ -1006,7 +1101,7 @@ var N = class {
 		if (!this._container) return;
 		let t = document.createElement("div");
 		t.className = `log-entry action-${e.action}`, t.dataset.objectId = e.objectId ?? "";
-		let n = e.userId ? e.userId.slice(0, 8) : "????????", r = e.pageIndex === void 0 ? "" : `Page ${e.pageIndex + 1}`, i = e.action === "added" ? "＋" : "−";
+		let n = e.userName && e.userName.trim() ? e.userName : e.userId ? e.userId.slice(0, 8) + "…" : "????????", r = e.pageIndex === void 0 ? "" : `Page ${e.pageIndex + 1}`, i = e.action === "added" ? "＋" : "−";
 		t.innerHTML = `
       <div class="log-entry-header">
         <span class="log-badge ${e.action}">${i} ${e.action}</span>
@@ -1016,8 +1111,12 @@ var N = class {
         <span class="log-tool-name">${this._toolLabel(e.tool)}</span>
         <span class="log-page">${r}</span>
       </div>
-      <div class="log-user" title="User ID: ${e.userId}">${n}…</div>
+      <div class="log-user" title="User ID: ${this._safe(e.userId ?? "")}">${this._safe(n)}</div>
     `, this._container.prepend(t);
+	}
+	_safe(e) {
+		let t = document.createElement("div");
+		return t.textContent = e, t.innerHTML;
 	}
 	_toolLabel(e) {
 		return {
@@ -1033,8 +1132,8 @@ var N = class {
 			eraser: "Eraser"
 		}[e] ?? e ?? "Object";
 	}
-}, B = class {
-	userId;
+}, K = class {
+	_user;
 	_pagesContainerId;
 	_comments;
 	_pinEls;
@@ -1044,8 +1143,8 @@ var N = class {
 	_pendingPlacement;
 	_panel;
 	_popup;
-	constructor({ userId: e, pagesContainerId: t, threadPanelId: n, newPopupId: r }) {
-		this.userId = e, this._pagesContainerId = t, this._comments = /* @__PURE__ */ new Map(), this._pinEls = /* @__PURE__ */ new Map(), this._counter = 0, this._scale = 1, this._activeId = null, this._pendingPlacement = null, this._panel = document.getElementById(n), this._popup = document.getElementById(r), this._bindPanelEvents(), this._bindPopupEvents();
+	constructor({ user: e, pagesContainerId: t, threadPanelId: n, newPopupId: r }) {
+		this._user = e, this._pagesContainerId = t, this._comments = /* @__PURE__ */ new Map(), this._pinEls = /* @__PURE__ */ new Map(), this._counter = 0, this._scale = 1, this._activeId = null, this._pendingPlacement = null, this._panel = document.getElementById(n), this._popup = document.getElementById(r), this._bindPanelEvents(), this._bindPopupEvents();
 	}
 	startPlacement(e, t, n, r) {
 		this._closeThreadSilent(), this._pendingPlacement = {
@@ -1115,7 +1214,7 @@ var N = class {
 		t && (t.textContent = `#${e.number}`), n && (n.innerHTML = e.messages.map((e) => `
       <div class="ctp-message">
         <div class="ctp-msg-header">
-          <span class="ctp-msg-user">${this._shortId(e.userId)}</span>
+          <span class="ctp-msg-user" title="${this._safe(e.userId ?? "")}">${this._safe(this._renderUser(e.userId, e.userName))}</span>
           <span class="ctp-msg-time">${p(e.timestamp)}</span>
         </div>
         <div class="ctp-msg-text">${this._safe(e.text ?? "")}</div>
@@ -1157,7 +1256,8 @@ var N = class {
 			if (!n) return;
 			n.messages.push({
 				id: d(),
-				userId: this.userId,
+				userId: this._user.id,
+				userName: this._user.displayName,
 				text: t,
 				timestamp: Date.now()
 			}), e && (e.value = ""), this._renderThread(n);
@@ -1213,7 +1313,8 @@ var N = class {
 			resolved: !1,
 			messages: [{
 				id: d(),
-				userId: this.userId,
+				userId: this._user.id,
+				userName: this._user.displayName,
 				text: e,
 				timestamp: Date.now()
 			}]
@@ -1223,11 +1324,15 @@ var N = class {
 	_shortId(e) {
 		return e ? e.slice(0, 8) + "…" : "?";
 	}
+	_renderUser(e, t) {
+		return t && t.trim() ? t : this._shortId(e);
+	}
 	_safe(e) {
 		let t = document.createElement("div");
 		return t.textContent = e, t.innerHTML;
 	}
-}, V = class {
+}, q = class e {
+	user;
 	userId;
 	_opts;
 	_renderer = null;
@@ -1241,6 +1346,10 @@ var N = class {
 	_log;
 	_canvas;
 	_comments;
+	_historyStack = [];
+	_historyIndex = -1;
+	_suppressHistory = !1;
+	static HISTORY_MAX = 50;
 	constructor(e = {}) {
 		this._opts = {
 			viewerPanelId: "viewer-panel",
@@ -1252,20 +1361,29 @@ var N = class {
 			threadPanelId: "comment-thread-panel",
 			newCommentPopupId: "new-comment-popup",
 			displayScale: 1.5,
-			userId: "",
 			...e
-		}, this.userId = this._opts.userId || d(), this._log = new z(this._opts.logContainerId), this._canvas = new R({
-			userId: this.userId,
-			onEvent: (e) => this._log.addEvent(e),
+		}, this.user = this._resolveUser(e), this.userId = this.user.id, this._log = new G(this._opts.logContainerId), this._canvas = new W({
+			user: this.user,
+			onEvent: (e) => {
+				this._log.addEvent(e), (e.action === "added" || e.action === "removed") && this._snapshot();
+			},
 			onCommentPlace: (e, t, n, r) => {
 				this._comments.startPlacement(e, t, n, r);
 			}
-		}), this._comments = new B({
-			userId: this.userId,
+		}), this._comments = new K({
+			user: this.user,
 			pagesContainerId: this._opts.pagesContainerId,
 			threadPanelId: this._opts.threadPanelId,
 			newPopupId: this._opts.newCommentPopupId
 		}), this._bindResize();
+	}
+	_resolveUser(e) {
+		if (e.user) return e.user;
+		let t = e.userId || d();
+		return {
+			id: t,
+			displayName: t.slice(0, 8)
+		};
 	}
 	async loadFile(e) {
 		let t = m(e.name) ?? m(e.type);
@@ -1294,6 +1412,36 @@ var N = class {
 	setStrokeWidth(e) {
 		this._canvas.setStrokeWidth(e);
 	}
+	setFillColor(e) {
+		this._canvas.setFillColor(e);
+	}
+	setFillOpacity(e) {
+		this._canvas.setFillOpacity(e);
+	}
+	setDashArray(e) {
+		this._canvas.setDashArray(e);
+	}
+	setLineStyle(e) {
+		this._canvas.setLineStyle(e);
+	}
+	getColor() {
+		return this._canvas.strokeColor;
+	}
+	getStrokeWidth() {
+		return this._canvas.strokeWidth;
+	}
+	getFillColor() {
+		return this._canvas.fillColor;
+	}
+	getFillOpacity() {
+		return this._canvas.fillOpacity;
+	}
+	getDashArray() {
+		return [...this._canvas.dashArray];
+	}
+	getLineStyle() {
+		return this._canvas.lineStyle;
+	}
 	clearLog() {
 		this._log.clear();
 	}
@@ -1314,8 +1462,38 @@ var N = class {
 		});
 	}
 	async restore(e) {
-		let t = j(e);
-		await this._canvas.loadFromData(t.pages ?? []), this._log.repopulate(t.log ?? []), t.comments && this._comments.fromJSON(t.comments, this._currentScale);
+		this._suppressHistory = !0;
+		try {
+			let t = j(e);
+			await this._canvas.loadFromData(t.pages ?? []), this._log.repopulate(t.log ?? []), t.comments && this._comments.fromJSON(t.comments, this._currentScale);
+		} finally {
+			this._suppressHistory = !1;
+		}
+	}
+	canUndo() {
+		return this._historyIndex > 0;
+	}
+	canRedo() {
+		return this._historyIndex < this._historyStack.length - 1;
+	}
+	async undo() {
+		this.canUndo() && (this._historyIndex--, await this.restore(this._historyStack[this._historyIndex]));
+	}
+	async redo() {
+		this.canRedo() && (this._historyIndex++, await this.restore(this._historyStack[this._historyIndex]));
+	}
+	_resetHistory() {
+		this._historyStack = [], this._historyIndex = -1, this._snapshot();
+	}
+	_snapshot() {
+		if (this._suppressHistory) return;
+		let t;
+		try {
+			t = this.save();
+		} catch {
+			return;
+		}
+		this._historyStack = this._historyStack.slice(0, this._historyIndex + 1), this._historyStack.push(t), this._historyStack.length > e.HISTORY_MAX && (this._historyStack = this._historyStack.slice(-e.HISTORY_MAX)), this._historyIndex = this._historyStack.length - 1;
 	}
 	destroy() {
 		this._canvas.destroy(), this._renderer && this._renderer.destroy(), this._blobURL && URL.revokeObjectURL(this._blobURL), this._comments.clearAll();
@@ -1326,7 +1504,7 @@ var N = class {
 			this._canvas.destroy(), this._renderer && this._renderer.destroy(), this._comments.clearAll(), this._baseDims = [], this._docType = t, this._docLabel = n;
 			let r = this._viewerWidth();
 			if (t === "pdf") {
-				let t = new N();
+				let t = new P();
 				this._renderer = t;
 				let n = await t.load(e);
 				this._currentScale = t.getScale(r);
@@ -1338,7 +1516,7 @@ var N = class {
 					});
 				}
 			} else {
-				let t = new P();
+				let t = new F();
 				this._renderer = t;
 				let n = await t.load(e);
 				this._currentScale = t.getScale(r), this._baseDims.push({
@@ -1346,7 +1524,7 @@ var N = class {
 					height: n.height
 				});
 			}
-			await this._buildDOM(n);
+			await this._buildDOM(n), this._resetHistory();
 		} catch (e) {
 			throw this._showLoading(!1), e;
 		}
@@ -1370,7 +1548,7 @@ var N = class {
 				this._activePageIndex = e;
 			}, !0);
 		}
-		t.appendChild(a), i.length > 0 && this._renderer instanceof N ? (await this._renderer.renderPage(i[0].pageNum - 1, i[0].canvasEl, r), this._showLoading(!1), this._showEmpty(!1), this._showViewport(!0), i.length > 1 && Promise.all(i.slice(1).map(({ pageNum: e, canvasEl: t }) => this._renderer.renderPage(e - 1, t, r))).catch(console.error)) : (this._showLoading(!1), this._showEmpty(!1), this._showViewport(!0)), this._canvas.setMode(this._mode), this._comments.repositionAll(r);
+		t.appendChild(a), i.length > 0 && this._renderer instanceof P ? (await this._renderer.renderPage(i[0].pageNum - 1, i[0].canvasEl, r), this._showLoading(!1), this._showEmpty(!1), this._showViewport(!0), i.length > 1 && Promise.all(i.slice(1).map(({ pageNum: e, canvasEl: t }) => this._renderer.renderPage(e - 1, t, r))).catch(console.error)) : (this._showLoading(!1), this._showEmpty(!1), this._showViewport(!0)), this._canvas.setMode(this._mode), this._comments.repositionAll(r);
 		let o = e.split(/[/\\]/).pop()?.replace(/\?.*$/, "") ?? e, s = document.getElementById("doc-title");
 		s && (s.textContent = o);
 		let c = document.getElementById("doc-meta");
@@ -1433,7 +1611,7 @@ var N = class {
 				}
 				this._canvas.resize(e, t);
 			}
-			r.length && this._renderer instanceof N && await Promise.all(r.map(({ i: e, canvasEl: n }) => this._renderer.renderPage(e, n, t))), this._comments.repositionAll(t);
+			r.length && this._renderer instanceof P && await Promise.all(r.map(({ i: e, canvasEl: n }) => this._renderer.renderPage(e, n, t))), this._comments.repositionAll(t);
 		}, 250);
 		new ResizeObserver(t).observe(e);
 	}
@@ -1455,6 +1633,6 @@ var N = class {
 	}
 };
 //#endregion
-export { z as ActivityLog, R as AnnotationCanvas, B as CommentManager, V as DocumentAnnotator, P as ImageRenderer, N as PDFRenderer, f as debounce, p as formatTime, g as fromPdfDate, j as fromXFDF, d as generateUUID, m as getDocumentType, h as toPdfDate, A as toXFDF };
+export { G as ActivityLog, W as AnnotationCanvas, K as CommentManager, q as DocumentAnnotator, F as ImageRenderer, P as PDFRenderer, f as debounce, p as formatTime, g as fromPdfDate, j as fromXFDF, d as generateUUID, m as getDocumentType, h as toPdfDate, A as toXFDF };
 
 //# sourceMappingURL=xfdf-annotator.js.map

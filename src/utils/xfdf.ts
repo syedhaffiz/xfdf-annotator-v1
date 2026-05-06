@@ -54,6 +54,11 @@ export interface XFDFPageInput {
 export interface XFDFCommentMessage {
   id: string | null
   userId: string | null
+  /**
+   * Display name captured at the time the message was posted. Optional for
+   * backwards compatibility with XFDF saved before this field existed.
+   */
+  userName?: string | null
   text: string | null
   timestamp: number
 }
@@ -275,8 +280,11 @@ export function toXFDF({ docId, pages, comments, log }: XFDFInput): string {
         ` number="${c.number}" resolved="${c.resolved ? 1 : 0}">`
       )
       for (const m of c.messages) {
+        // userName is optional — only emit when set so legacy consumers
+        // that don't populate it stay byte-equal in their XFDF output.
+        const userNameAttr = m.userName ? ` userName="${esc(m.userName)}"` : ''
         parts.push(
-          `<ext:message id="${esc(m.id)}" userId="${esc(m.userId)}"` +
+          `<ext:message id="${esc(m.id)}" userId="${esc(m.userId)}"${userNameAttr}` +
           ` timestamp="${toPdfDate(m.timestamp)}">${esc(m.text)}</ext:message>`
         )
       }
@@ -323,6 +331,7 @@ export function fromXFDF(xmlString: string): ParsedXFDF {
         messages.push({
           id:        mEl.getAttribute('id'),
           userId:    mEl.getAttribute('userId'),
+          userName:  mEl.getAttribute('userName'),
           text:      mEl.textContent,
           timestamp: fromPdfDate(mEl.getAttribute('timestamp')),
         })

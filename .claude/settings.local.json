@@ -18,7 +18,13 @@
       "Bash(timeout 15 npx ng serve --port 4202)",
       "Bash(npm pack *)",
       "Bash(npx ng *)",
-      "Bash(npm view *)"
+      "Bash(npm view *)",
+      "Bash(gh pr create --base main --head feat/undo-redo-responsive-toolbar --title 'Add undo/redo and responsive annotation toolbar' --body ' *)",
+      "Bash(where gh *)",
+      "Read(//c/Program Files/**)",
+      "Bash(findstr -i fabric)",
+      "Bash(dir E:\\\\xfdf-annotator-angular\\\\node_modules)",
+      "Bash(findstr /i fabric)"
     ]
   }
 }

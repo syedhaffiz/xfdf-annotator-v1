@@ -39,7 +39,11 @@ export class ActivityLog {
     entry.className    = `log-entry action-${ev.action}`
     entry.dataset['objectId'] = ev.objectId ?? ''
 
-    const shortId   = ev.userId ? ev.userId.slice(0, 8) : '????????'
+    // Prefer the persisted display name; fall back to a truncated user id
+    // for legacy entries (saved before userName became part of the schema).
+    const userLabel = (ev.userName && ev.userName.trim())
+      ? ev.userName
+      : (ev.userId ? ev.userId.slice(0, 8) + '…' : '????????')
     const pageLabel = ev.pageIndex !== undefined ? `Page ${ev.pageIndex + 1}` : ''
     const icon      = ev.action === 'added' ? '＋' : '−'
 
@@ -52,9 +56,16 @@ export class ActivityLog {
         <span class="log-tool-name">${this._toolLabel(ev.tool)}</span>
         <span class="log-page">${pageLabel}</span>
       </div>
-      <div class="log-user" title="User ID: ${ev.userId}">${shortId}…</div>
+      <div class="log-user" title="User ID: ${this._safe(ev.userId ?? '')}">${this._safe(userLabel)}</div>
     `
     this._container.prepend(entry)
+  }
+
+  /** Defensive HTML escape — entry text comes from arbitrary user input. */
+  private _safe(s: string): string {
+    const d = document.createElement('div')
+    d.textContent = s
+    return d.innerHTML
   }
 
   private _toolLabel(tool: string): string {

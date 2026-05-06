@@ -45,6 +45,11 @@ export interface XFDFPageInput {
 export interface XFDFCommentMessage {
     id: string | null;
     userId: string | null;
+    /**
+     * Display name captured at the time the message was posted. Optional for
+     * backwards compatibility with XFDF saved before this field existed.
+     */
+    userName?: string | null;
     text: string | null;
     timestamp: number;
 }

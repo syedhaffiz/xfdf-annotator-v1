@@ -2,7 +2,7 @@ import { generateUUID, debounce, getDocumentType } from '../utils/utils'
 import { toXFDF, fromXFDF } from '../utils/xfdf'
 import { PDFRenderer } from './PDFRenderer'
 import { ImageRenderer } from './ImageRenderer'
-import { AnnotationCanvas } from './AnnotationCanvas'
+import { AnnotationCanvas, type LineStyle } from './AnnotationCanvas'
 import { ActivityLog } from './ActivityLog'
 import { CommentManager } from './CommentManager'
 import type {
@@ -10,7 +10,10 @@ import type {
   DocumentType,
   AnnotationTool,
   AnnotationMode,
+  User,
 } from '../types/index'
+
+export type { LineStyle } from './AnnotationCanvas'
 
 interface PageBaseDims {
   width:  number
@@ -25,9 +28,12 @@ interface PdfDims {
 type Renderer = PDFRenderer | ImageRenderer
 
 export class DocumentAnnotator {
+  /** Identity of the user authoring annotations and comments. */
+  readonly user: User
+  /** @deprecated use `user.id`. */
   readonly userId: string
 
-  private _opts: Required<DocumentAnnotatorOptions>
+  private _opts: DocumentAnnotatorOptions & Required<Omit<DocumentAnnotatorOptions, 'user' | 'userId'>>
   private _renderer:        Renderer | null = null
   private _docType:         DocumentType | null = null
   private _docLabel         = ''
@@ -41,6 +47,15 @@ export class DocumentAnnotator {
   private _canvas:   AnnotationCanvas
   private _comments: CommentManager
 
+  // ── Undo / redo: XFDF snapshot stack ──────────────────────────────
+  // Every annotation event (added / removed) appends the current XFDF
+  // string. `undo()` / `redo()` walk the stack and restore() the chosen
+  // snapshot. Capped at HISTORY_MAX entries to bound memory.
+  private _historyStack:   string[] = []
+  private _historyIndex                = -1
+  private _suppressHistory             = false
+  private static readonly HISTORY_MAX  = 50
+
   constructor(options: DocumentAnnotatorOptions = {}) {
     this._opts = {
       viewerPanelId:     'viewer-panel',
@@ -52,30 +67,49 @@ export class DocumentAnnotator {
       threadPanelId:     'comment-thread-panel',
       newCommentPopupId: 'new-comment-popup',
       displayScale:      1.5,
-      userId:            '',
       ...options,
     }
 
-    this.userId = this._opts.userId || generateUUID()
+    // Resolve the User identity:
+    //  • explicit `user` wins.
+    //  • else legacy `userId` (with display name = first 8 chars of the id).
+    //  • else generate a fresh session id.
+    this.user = this._resolveUser(options)
+    this.userId = this.user.id
 
     this._log = new ActivityLog(this._opts.logContainerId)
 
     this._canvas = new AnnotationCanvas({
-      userId:  this.userId,
-      onEvent: (ev) => this._log.addEvent(ev),
+      user:    this.user,
+      onEvent: (ev) => {
+        this._log.addEvent(ev)
+        // Capture a history snapshot for "real" annotation events (drew /
+        // erased). `_suppressHistory` is set during undo/redo and during
+        // load/restore, so those don't pollute the stack.
+        if (ev.action === 'added' || ev.action === 'removed') {
+          this._snapshot()
+        }
+      },
       onCommentPlace: (pageIndex, bx, by, nativeEvent) => {
         this._comments.startPlacement(pageIndex, bx, by, nativeEvent)
       },
     })
 
     this._comments = new CommentManager({
-      userId:           this.userId,
+      user:             this.user,
       pagesContainerId: this._opts.pagesContainerId,
       threadPanelId:    this._opts.threadPanelId,
       newPopupId:       this._opts.newCommentPopupId,
     })
 
     this._bindResize()
+  }
+
+  /** Internal: pick the right User from `options`, falling back as documented. */
+  private _resolveUser(options: DocumentAnnotatorOptions): User {
+    if (options.user) return options.user
+    const id = options.userId || generateUUID()
+    return { id, displayName: id.slice(0, 8) }
   }
 
   // ── Public API ────────────────────────────────────────────────────
@@ -111,6 +145,31 @@ export class DocumentAnnotator {
 
   setColor(color: string): void       { this._canvas.setColor(color) }
   setStrokeWidth(width: number): void { this._canvas.setStrokeWidth(width) }
+
+  /** Hex fill colour for new fillable shapes. */
+  setFillColor(color: string): void   { this._canvas.setFillColor(color) }
+
+  /** Fill opacity 0–1 for new fillable shapes (`0` = transparent fill). */
+  setFillOpacity(opacity: number): void { this._canvas.setFillOpacity(opacity) }
+
+  /** Stroke dash pattern for new strokable shapes (`[]` = solid). */
+  setDashArray(arr: number[]): void   { this._canvas.setDashArray(arr) }
+
+  /**
+   * Line rendering style for new shapes/lines/polygons.
+   *  - `'solid'` (default) — regular straight stroke, optionally dashed.
+   *  - `'arc'`             — cloud-border with outward-bulging arcs.
+   */
+  setLineStyle(style: LineStyle): void { this._canvas.setLineStyle(style) }
+
+  // ── Read-back getters (consumers use these to mirror state) ───────
+  getColor():       string    { return this._canvas.strokeColor }
+  getStrokeWidth(): number    { return this._canvas.strokeWidth }
+  getFillColor():   string    { return this._canvas.fillColor }
+  getFillOpacity(): number    { return this._canvas.fillOpacity }
+  getDashArray():   number[]  { return [...this._canvas.dashArray] }
+  getLineStyle():   LineStyle { return this._canvas.lineStyle }
+
   clearLog(): void                    { this._log.clear() }
 
   insertImage(file: File): void {
@@ -135,12 +194,63 @@ export class DocumentAnnotator {
   }
 
   async restore(xfdfString: string): Promise<void> {
-    const data = fromXFDF(xfdfString)
-    await this._canvas.loadFromData(data.pages ?? [])
-    this._log.repopulate(data.log ?? [])
-    if (data.comments) {
-      this._comments.fromJSON(data.comments, this._currentScale)
+    this._suppressHistory = true
+    try {
+      const data = fromXFDF(xfdfString)
+      await this._canvas.loadFromData(data.pages ?? [])
+      this._log.repopulate(data.log ?? [])
+      if (data.comments) {
+        this._comments.fromJSON(data.comments, this._currentScale)
+      }
+    } finally {
+      this._suppressHistory = false
     }
+  }
+
+  // ── Undo / redo public API ────────────────────────────────────────
+
+  /** True if there's an earlier state to revert to. */
+  canUndo(): boolean { return this._historyIndex > 0 }
+
+  /** True if there's a future state to re-apply. */
+  canRedo(): boolean { return this._historyIndex < this._historyStack.length - 1 }
+
+  /** Revert the canvas to the previous snapshot. No-op if `canUndo()` is false. */
+  async undo(): Promise<void> {
+    if (!this.canUndo()) return
+    this._historyIndex--
+    await this.restore(this._historyStack[this._historyIndex])
+  }
+
+  /** Re-apply the next snapshot in the redo branch. No-op if `canRedo()` is false. */
+  async redo(): Promise<void> {
+    if (!this.canRedo()) return
+    this._historyIndex++
+    await this.restore(this._historyStack[this._historyIndex])
+  }
+
+  /**
+   * Reset history with the current state as the new baseline. Called after
+   * every load to drop snapshots from the previous document.
+   */
+  private _resetHistory(): void {
+    this._historyStack = []
+    this._historyIndex = -1
+    this._snapshot()
+  }
+
+  /** Capture the current document as XFDF and append it to the history stack. */
+  private _snapshot(): void {
+    if (this._suppressHistory) return
+    let xml: string
+    try { xml = this.save() } catch { return }
+    // Truncate any redo branch — a new edit invalidates the redo future.
+    this._historyStack = this._historyStack.slice(0, this._historyIndex + 1)
+    this._historyStack.push(xml)
+    if (this._historyStack.length > DocumentAnnotator.HISTORY_MAX) {
+      this._historyStack = this._historyStack.slice(-DocumentAnnotator.HISTORY_MAX)
+    }
+    this._historyIndex = this._historyStack.length - 1
   }
 
   destroy(): void {
@@ -182,6 +292,7 @@ export class DocumentAnnotator {
       }
 
       await this._buildDOM(label)
+      this._resetHistory()
     } catch (err) {
       this._showLoading(false)
       throw err

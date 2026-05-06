@@ -2,12 +2,11 @@ import * as pdfjsLib from 'pdfjs-dist'
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist'
 import type { IRenderer, PageDimensions } from '../types/index'
 
-// Default to the matching CDN URL so library consumers don't need to configure the worker.
-// Consumers can override pdfjsLib.GlobalWorkerOptions.workerSrc before calling PDFRenderer.load().
-if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs'
-}
+// CDN fallback URL used when the consumer hasn't configured a worker.
+// Applied lazily inside `load()` (NOT at module load) so any consumer
+// override is preserved regardless of import order.
+const DEFAULT_WORKER_SRC =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs'
 
 interface PdfDims {
   widthPts: number
@@ -24,6 +23,14 @@ export class PDFRenderer implements IRenderer {
   get pageCount(): number { return this._pageCount }
 
   async load(url: string): Promise<number> {
+    // Lazy CDN fallback — only kicks in if the consumer hasn't pinned
+    // a worker. Setting this at call-time (not module-load time) means
+    // a consumer that overrides pdfjsLib.GlobalWorkerOptions.workerSrc
+    // anywhere before calling load() always wins.
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = DEFAULT_WORKER_SRC
+    }
+
     const task   = pdfjsLib.getDocument({ url, cMapPacked: true })
     this._pdf    = await task.promise
     this._pageCount = this._pdf.numPages

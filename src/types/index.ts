@@ -139,13 +139,38 @@ export interface XFDFSerialiseInput {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// User
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Identity of the human authoring annotations and comments.
+ *
+ * Persisted in XFDF as `userId` + `userName` so the source of every entry
+ * is preserved across reloads. UI surfaces display `displayName`; backend
+ * deduplication keys on `id`.
+ */
+export interface User {
+  /** Stable opaque identifier (e.g. UUID, email, sub claim). */
+  id: string
+  /** Human-readable label shown in the activity log and comment threads. */
+  displayName: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Comments
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A single message inside a comment thread. */
 export interface CommentMessage {
   id: string
+  /** Author's stable ID (matches `User.id`). */
   authorId: string
+  /**
+   * Author's display name at the time the message was posted. Persisted in
+   * XFDF so threads remain readable when a user later changes their name
+   * or is no longer reachable via the host application.
+   */
+  authorName?: string
   text: string
   createdAt: number
 }
@@ -182,6 +207,12 @@ export interface ActivityEntry {
   objectId?: string
   /** User ID of the actor (alias for authorId). */
   userId: string
+  /**
+   * Display name of the actor at the time of the event. Persisted in XFDF
+   * so the activity log remains readable on later reloads even if the user
+   * is no longer in the host application's directory.
+   */
+  userName?: string
   /** @deprecated use userId */
   authorId?: string
   timestamp: number
@@ -215,8 +246,19 @@ export interface DocumentAnnotatorOptions extends AnnotatorDOMOptions {
   displayScale?: number
 
   /**
-   * User ID shown in the comment author badge and activity log.
-   * If omitted, a random session ID is generated.
+   * Identity of the human authoring annotations and comments.
+   *
+   * If omitted, a random session id is generated and `displayName`
+   * defaults to the first 8 characters of that id. Pass a fully-formed
+   * `User` for production use so threads and the activity log show the
+   * real person rather than an opaque hash.
+   */
+  user?: User
+
+  /**
+   * @deprecated Pass `user` instead. Retained for backwards compatibility:
+   * if `user` is omitted but `userId` is set, the library constructs a
+   * `User` with `displayName` derived from the id.
    */
   userId?: string
 }
@@ -233,7 +275,7 @@ export type CommentPlaceHandler = (pageIndex: number, x: number, y: number, nati
 
 /** Options passed to the AnnotationCanvas constructor. */
 export interface AnnotationCanvasOptions {
-  userId: string
+  user: User
   onEvent: AnnotationEventHandler
   onCommentPlace: CommentPlaceHandler
 }

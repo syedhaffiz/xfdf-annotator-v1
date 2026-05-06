@@ -9,5 +9,7 @@ export declare class ActivityLog {
     getEvents(): ActivityEntry[];
     private _removeEmptyPlaceholder;
     private _prependEntry;
+    /** Defensive HTML escape — entry text comes from arbitrary user input. */
+    private _safe;
     private _toolLabel;
 }

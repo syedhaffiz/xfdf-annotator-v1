@@ -14,7 +14,7 @@ import {
 import type { TPointerEventInfo, TPointerEvent } from 'fabric'
 import { generateUUID } from '../utils/utils'
 import type { FabricCanvasJSON } from '../utils/xfdf'
-import type { AnnotationCanvasOptions, AnnotationTool, AnnotationMode, ActivityEntry } from '../types/index'
+import type { AnnotationCanvasOptions, AnnotationTool, AnnotationMode, ActivityEntry, User } from '../types/index'
 
 // ── Custom fabric object properties ──────────────────────────────
 
@@ -63,10 +63,85 @@ const CUSTOM_PROPS: string[] = ['objectId', 'createdBy', 'timestamp', 'actionTyp
 const MIN_SIZE    = 4
 const ARROW_HEAD  = 14
 
+/**
+ * Special line styles — non-dash rendering modes.
+ * `'arc'` produces a "revision cloud" border whose perimeter is a chain of
+ * outward-facing arcs. Anything else falls back to a regular straight stroke
+ * (optionally with a dash pattern).
+ */
+export type LineStyle = 'solid' | 'arc'
+
+/** Inline arc-radius for cloud-style strokes (in fabric design-space units). */
+const ARC_RADIUS = 6
+
+// ── Arc-cloud SVG path generators ─────────────────────────────────
+//
+// Each helper returns SVG path-data tracing the requested geometry as a
+// chain of outward-bulging quadrant arcs. Path data is in *local* coords
+// (origin at 0,0); callers position the resulting fabric.Path object via
+// setPositionByOrigin so a rotated/flipped/scaled source shape rebuilds
+// at exactly the same centre point.
+
+function _arcEdge(
+  segs: string[], x1: number, y1: number, x2: number, y2: number,
+  radius: number, sweep: 0 | 1,
+): void {
+  const dx = x2 - x1, dy = y2 - y1
+  const len = Math.hypot(dx, dy)
+  const n   = Math.max(1, Math.round(len / (radius * 2)))
+  for (let i = 1; i <= n; i++) {
+    const t  = i / n
+    const ex = (x1 + t * dx).toFixed(2)
+    const ey = (y1 + t * dy).toFixed(2)
+    segs.push(`A ${radius} ${radius} 0 0 ${sweep} ${ex} ${ey}`)
+  }
+}
+
+function rectArcPath(w: number, h: number, radius = ARC_RADIUS): string {
+  const segs: string[] = ['M 0 0']
+  // Walk clockwise; sweep=0 makes arcs bulge outward.
+  _arcEdge(segs, 0, 0, w, 0, radius, 0)
+  _arcEdge(segs, w, 0, w, h, radius, 0)
+  _arcEdge(segs, w, h, 0, h, radius, 0)
+  _arcEdge(segs, 0, h, 0, 0, radius, 0)
+  segs.push('Z')
+  return segs.join(' ')
+}
+
+function lineArcPath(dx: number, dy: number, radius = ARC_RADIUS): string {
+  const segs: string[] = ['M 0 0']
+  _arcEdge(segs, 0, 0, dx, dy, radius, 1)
+  return segs.join(' ')
+}
+
+function polygonArcPath(
+  points: ReadonlyArray<{ x: number; y: number }>, radius = ARC_RADIUS,
+): string {
+  if (points.length < 2) return ''
+  const minX = Math.min(...points.map(p => p.x))
+  const minY = Math.min(...points.map(p => p.y))
+  const local = points.map(p => ({ x: p.x - minX, y: p.y - minY }))
+  const segs: string[] = [`M ${local[0].x.toFixed(2)} ${local[0].y.toFixed(2)}`]
+  for (let i = 0; i < local.length - 1; i++) {
+    _arcEdge(segs, local[i].x, local[i].y, local[i + 1].x, local[i + 1].y, radius, 0)
+  }
+  _arcEdge(
+    segs,
+    local[local.length - 1].x, local[local.length - 1].y,
+    local[0].x,                  local[0].y,
+    radius, 0,
+  )
+  segs.push('Z')
+  return segs.join(' ')
+}
+
 export class AnnotationCanvas {
-  userId:         string
+  user:           User
   onEvent:        (entry: ActivityEntry) => void
   onCommentPlace: (pageIndex: number, x: number, y: number, e: MouseEvent) => void
+
+  /** @deprecated read `user.id` instead. */
+  get userId(): string { return this.user.id }
 
   private _pages:      Array<PageState | undefined>
   private _dirtyPages: Set<number>
@@ -77,8 +152,18 @@ export class AnnotationCanvas {
   strokeWidth  = 3
   mode:         AnnotationMode = 'edit'
 
-  constructor({ userId, onEvent, onCommentPlace }: AnnotationCanvasOptions) {
-    this.userId         = userId
+  // ── Fill / dash / line-style state ────────────────────────────────
+  /** Hex fill colour applied to newly-drawn fillable shapes. */
+  fillColor   = '#4a90e2'
+  /** Fill opacity 0–1. 0 (default) means "no fill" — stroke only. */
+  fillOpacity = 0
+  /** strokeDashArray applied to new strokable shapes ([] = solid). */
+  dashArray:  number[] = []
+  /** Special non-dash rendering style. `'arc'` triggers cloud-border substitution. */
+  lineStyle:  LineStyle = 'solid'
+
+  constructor({ user, onEvent, onCommentPlace }: AnnotationCanvasOptions) {
+    this.user           = user
     this.onEvent        = onEvent
     this.onCommentPlace = onCommentPlace ?? (() => { /* noop */ })
     this._pages      = []
@@ -185,6 +270,45 @@ export class AnnotationCanvas {
     })
   }
 
+  /** Hex fill colour for new fillable shapes (rect, ellipse, polygon, …). */
+  setFillColor(color: string): void { this.fillColor = color }
+
+  /**
+   * Fill opacity 0–1 for new fillable shapes. `0` (default) is treated as
+   * "no fill" — the resulting Fabric object gets `fill: 'transparent'`.
+   */
+  setFillOpacity(opacity: number): void {
+    this.fillOpacity = Math.max(0, Math.min(1, Number.isFinite(opacity) ? opacity : 0))
+  }
+
+  /** Stroke dash pattern for new strokable shapes. `[]` (or omitted) = solid. */
+  setDashArray(arr: number[]): void {
+    this.dashArray = Array.isArray(arr) ? [...arr] : []
+  }
+
+  /**
+   * Line rendering style for new shapes/lines/polygons.
+   *  - `'solid'` (default) — regular straight stroke, optionally dashed.
+   *  - `'arc'`             — cloud-border: perimeter is a chain of arcs.
+   */
+  setLineStyle(style: LineStyle): void { this.lineStyle = style }
+
+  /** Compute the CSS fill string from fillColor + fillOpacity. */
+  private _computeFill(): string {
+    if (this.fillOpacity <= 0) return 'transparent'
+    const hex = this.fillColor
+    const r = parseInt(hex.slice(1, 3), 16)
+    const g = parseInt(hex.slice(3, 5), 16)
+    const b = parseInt(hex.slice(5, 7), 16)
+    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return 'transparent'
+    return `rgba(${r},${g},${b},${this.fillOpacity})`
+  }
+
+  /** strokeDashArray value for new objects — null when solid. */
+  private _activeDash(): number[] | null {
+    return this.dashArray.length > 0 ? [...this.dashArray] : null
+  }
+
   insertImage(fileOrUrl: File | string, pageIndex: number): void {
     const p = this._pages[pageIndex]
     if (!p) return
@@ -223,7 +347,8 @@ export class AnnotationCanvas {
         description: `Inserted image on page ${pageIndex + 1}`,
         action:      'added',
         tool:        'image',
-        userId:      this.userId,
+        userId:      this.user.id,
+        userName:    this.user.displayName,
         timestamp:   meta.timestamp ?? Date.now(),
         pageIndex,
       }
@@ -340,6 +465,10 @@ export class AnnotationCanvas {
     fc.on('path:created', (e: { path: FabricObject }) => {
       const path = e.path as AnnotationObject
       if (!path) return
+      // Freehand strokes inherit the active dash pattern. Fill is left
+      // untouched (freehand is a stroke, not a closed shape).
+      const dash = this._activeDash()
+      if (dash) (path as FabricObject).set({ strokeDashArray: dash })
       this._attachMeta(path, 'freehand', pageIndex)
       path.selectable = (this.currentTool === 'select')
       path.evented    = true
@@ -452,7 +581,8 @@ export class AnnotationCanvas {
       description: `Erased on page ${pageIndex + 1}`,
       action:      'removed',
       tool:        target.tool ?? 'eraser',
-      userId:      this.userId,
+      userId:      this.user.id,
+      userName:    this.user.displayName,
       timestamp:   Date.now(),
       pageIndex,
     }
@@ -471,9 +601,16 @@ export class AnnotationCanvas {
     tool:  AnnotationTool,
     start: { x: number; y: number }
   ): FabricObject | null {
+    // Preview shows the chosen stroke/fill/dash so the user has a live
+    // sense of the final shape. We deliberately *don't* swap to arc-cloud
+    // during the preview — it's regenerated continuously on mouse-move
+    // and would be expensive to keep rebuilding. The swap happens once at
+    // mouse-up via `_makeFinalShape`.
     const base = {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
-      fill: 'transparent', selectable: false, evented: false,
+      fill: this._computeFill(),
+      strokeDashArray: this._activeDash(),
+      selectable: false, evented: false,
       strokeUniform: true, _helper: true,
     }
     switch (tool) {
@@ -523,10 +660,43 @@ export class AnnotationCanvas {
     start: { x: number; y: number },
     end:   { x: number; y: number }
   ): FabricObject | null {
+    const fill = this._computeFill()
+    const dash = this._activeDash()
     const base = {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
-      fill: 'transparent', selectable: false, evented: false, strokeUniform: true,
+      fill,
+      strokeDashArray: dash,
+      selectable: false, evented: false, strokeUniform: true,
     }
+
+    // ── Arc-cloud line style ────────────────────────────────────────
+    // Replace the natural rect/line geometry with a Fabric.Path whose
+    // perimeter is a chain of outward-bulging arcs. We emit local-coord
+    // path data and centre the result on the source bounding box, so
+    // origin/scale/rotation quirks don't shift the result around.
+    if (this.lineStyle === 'arc' && (tool === 'rectangle' || tool === 'line')) {
+      const minX = Math.min(start.x, end.x)
+      const minY = Math.min(start.y, end.y)
+      const w    = Math.abs(end.x - start.x)
+      const h    = Math.abs(end.y - start.y)
+      const cx   = minX + w / 2
+      const cy   = minY + h / 2
+
+      const pathData = tool === 'rectangle'
+        ? rectArcPath(w, h)
+        : lineArcPath(end.x - start.x, end.y - start.y)
+
+      if (!pathData) return null
+      const arc = new Path(pathData, {
+        ...base,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+      })
+      arc.setPositionByOrigin({ x: cx, y: cy } as never, 'center', 'center')
+      arc.setCoords()
+      return arc
+    }
+
     switch (tool) {
       case 'rectangle':
         return new Rect({
@@ -574,7 +744,9 @@ export class AnnotationCanvas {
     const d = `M ${start.x} ${start.y} L ${stopX} ${stopY} M ${lx} ${ly} L ${end.x} ${end.y} L ${rx} ${ry}`
     return new Path(d, {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
-      fill: 'transparent', strokeLineCap: 'round', strokeLineJoin: 'round',
+      fill: 'transparent',
+      strokeDashArray: this._activeDash(),
+      strokeLineCap: 'round', strokeLineJoin: 'round',
       strokeUniform: true, selectable: false, evented: false,
     })
   }
@@ -684,20 +856,48 @@ export class AnnotationCanvas {
     poly.helpers.forEach((h) => fc.remove(h))
     if (poly.rubberband) fc.remove(poly.rubberband)
 
-    const polygon = new Polygon(poly.points, {
-      stroke: this.strokeColor, strokeWidth: this.strokeWidth,
-      fill: 'transparent', strokeUniform: true,
-      selectable: false, evented: false,
-      objectCaching: false, strokeLineJoin: 'round',
-    })
+    const fill = this._computeFill()
+    const dash = this._activeDash()
 
-    this._attachMeta(polygon as AnnotationObject, 'polygon', pageIndex)
-    polygon.selectable = (this.currentTool === 'select')
+    let finalShape: FabricObject
 
-    fc.add(polygon)
+    if (this.lineStyle === 'arc') {
+      // Arc-cloud border: emit local-coord arc-chain path, centre the
+      // resulting Path on the polygon's bounding-box centre.
+      const minX = Math.min(...poly.points.map(p => p.x))
+      const maxX = Math.max(...poly.points.map(p => p.x))
+      const minY = Math.min(...poly.points.map(p => p.y))
+      const maxY = Math.max(...poly.points.map(p => p.y))
+      const cx = (minX + maxX) / 2
+      const cy = (minY + maxY) / 2
+
+      const pathData = polygonArcPath(poly.points)
+      const arc = new Path(pathData, {
+        stroke: this.strokeColor, strokeWidth: this.strokeWidth,
+        fill, strokeDashArray: dash,
+        strokeLineCap: 'round', strokeLineJoin: 'round',
+        strokeUniform: true,
+        selectable: false, evented: false,
+      })
+      arc.setPositionByOrigin({ x: cx, y: cy } as never, 'center', 'center')
+      arc.setCoords()
+      finalShape = arc
+    } else {
+      finalShape = new Polygon(poly.points, {
+        stroke: this.strokeColor, strokeWidth: this.strokeWidth,
+        fill, strokeDashArray: dash, strokeUniform: true,
+        selectable: false, evented: false,
+        objectCaching: false, strokeLineJoin: 'round',
+      })
+    }
+
+    this._attachMeta(finalShape as AnnotationObject, 'polygon', pageIndex)
+    finalShape.selectable = (this.currentTool === 'select')
+
+    fc.add(finalShape)
     fc.renderAll()
 
-    this._fireEvent('added', 'polygon', polygon as AnnotationObject, pageIndex)
+    this._fireEvent('added', 'polygon', finalShape as AnnotationObject, pageIndex)
 
     poly.active = false; poly.points = []; poly.helpers = []; poly.rubberband = null
   }
@@ -743,7 +943,7 @@ export class AnnotationCanvas {
 
   private _attachMeta(obj: AnnotationObject, tool: string, pageIndex: number): void {
     obj.objectId   = generateUUID()
-    obj.createdBy  = this.userId
+    obj.createdBy  = this.user.id
     obj.timestamp  = Date.now()
     obj.actionType = 'draw'
     obj.tool       = tool
@@ -767,7 +967,8 @@ export class AnnotationCanvas {
       description: `${action === 'added' ? 'Drew' : 'Removed'} ${tool} on page ${pageIndex + 1}`,
       action,
       tool,
-      userId:    this.userId,
+      userId:    this.user.id,
+      userName:  this.user.displayName,
       timestamp: obj.timestamp ?? Date.now(),
       pageIndex,
     }
