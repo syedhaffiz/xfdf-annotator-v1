@@ -1477,10 +1477,10 @@ var W = class {
 		return this._historyIndex < this._historyStack.length - 1;
 	}
 	async undo() {
-		this.canUndo() && (this._historyIndex--, await this.restore(this._historyStack[this._historyIndex]));
+		this.canUndo() && (this._historyIndex--, await this.restore(this._historyStack[this._historyIndex]), this._emitChange());
 	}
 	async redo() {
-		this.canRedo() && (this._historyIndex++, await this.restore(this._historyStack[this._historyIndex]));
+		this.canRedo() && (this._historyIndex++, await this.restore(this._historyStack[this._historyIndex]), this._emitChange());
 	}
 	_resetHistory() {
 		this._historyStack = [], this._historyIndex = -1, this._snapshot();
@@ -1493,7 +1493,15 @@ var W = class {
 		} catch {
 			return;
 		}
-		this._historyStack = this._historyStack.slice(0, this._historyIndex + 1), this._historyStack.push(t), this._historyStack.length > e.HISTORY_MAX && (this._historyStack = this._historyStack.slice(-e.HISTORY_MAX)), this._historyIndex = this._historyStack.length - 1;
+		this._historyStack = this._historyStack.slice(0, this._historyIndex + 1), this._historyStack.push(t), this._historyStack.length > e.HISTORY_MAX && (this._historyStack = this._historyStack.slice(-e.HISTORY_MAX)), this._historyIndex = this._historyStack.length - 1, this._emitChange();
+	}
+	_emitChange() {
+		let e = this._opts.onChange;
+		if (e) try {
+			e();
+		} catch (e) {
+			console.error("[DocumentAnnotator] onChange threw:", e);
+		}
 	}
 	destroy() {
 		this._canvas.destroy(), this._renderer && this._renderer.destroy(), this._blobURL && URL.revokeObjectURL(this._blobURL), this._comments.clearAll();

@@ -181,6 +181,17 @@ export interface AnnotatorDOMOptions {
     threadPanelId?: string;
     newCommentPopupId?: string;
 }
+/**
+ * Notification fired whenever the annotator's reactive surface changes
+ * (annotation added, removed, undo, redo, restore). Use it to mirror
+ * `canUndo()` / `canRedo()` and similar getters into reactive state in
+ * a host framework (Angular signals, React state, Svelte stores, …).
+ *
+ * Polling those getters from a click handler isn't enough — a button
+ * disabled by stale state never fires, so the consumer needs a push
+ * signal to know when to refresh.
+ */
+export type AnnotationChangeHandler = () => void;
 /** Full constructor options for DocumentAnnotator. */
 export interface DocumentAnnotatorOptions extends AnnotatorDOMOptions {
     /**
@@ -188,6 +199,12 @@ export interface DocumentAnnotatorOptions extends AnnotatorDOMOptions {
      * Defaults to 1.5 (a good balance between sharpness and performance).
      */
     displayScale?: number;
+    /**
+     * Fired after every operation that mutates the history stack: annotation
+     * added or removed by the user, `undo()`, `redo()`, `restore()`, or load.
+     * Listeners typically refresh `canUndo()` / `canRedo()` mirrors.
+     */
+    onChange?: AnnotationChangeHandler;
     /**
      * Identity of the human authoring annotations and comments.
      *

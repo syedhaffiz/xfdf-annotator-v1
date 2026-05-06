@@ -33,7 +33,7 @@ export class DocumentAnnotator {
   /** @deprecated use `user.id`. */
   readonly userId: string
 
-  private _opts: DocumentAnnotatorOptions & Required<Omit<DocumentAnnotatorOptions, 'user' | 'userId'>>
+  private _opts: DocumentAnnotatorOptions & Required<Omit<DocumentAnnotatorOptions, 'user' | 'userId' | 'onChange'>>
   private _renderer:        Renderer | null = null
   private _docType:         DocumentType | null = null
   private _docLabel         = ''
@@ -220,6 +220,7 @@ export class DocumentAnnotator {
     if (!this.canUndo()) return
     this._historyIndex--
     await this.restore(this._historyStack[this._historyIndex])
+    this._emitChange()
   }
 
   /** Re-apply the next snapshot in the redo branch. No-op if `canRedo()` is false. */
@@ -227,6 +228,7 @@ export class DocumentAnnotator {
     if (!this.canRedo()) return
     this._historyIndex++
     await this.restore(this._historyStack[this._historyIndex])
+    this._emitChange()
   }
 
   /**
@@ -251,6 +253,18 @@ export class DocumentAnnotator {
       this._historyStack = this._historyStack.slice(-DocumentAnnotator.HISTORY_MAX)
     }
     this._historyIndex = this._historyStack.length - 1
+    this._emitChange()
+  }
+
+  /**
+   * Push a notification to consumers that the history stack changed.
+   * Errors thrown by the listener are caught so they never derail the
+   * library's own state machine.
+   */
+  private _emitChange(): void {
+    const handler = this._opts.onChange
+    if (!handler) return
+    try { handler() } catch (err) { console.error('[DocumentAnnotator] onChange threw:', err) }
   }
 
   destroy(): void {

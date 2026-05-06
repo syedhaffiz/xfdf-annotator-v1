@@ -26,6 +26,7 @@ export type {
   AnnotatorDOMOptions,
   DocumentAnnotatorOptions,
   AnnotationEventHandler,
+  AnnotationChangeHandler,
   CommentPlaceHandler,
   AnnotationCanvasOptions,
 } from './types/index'

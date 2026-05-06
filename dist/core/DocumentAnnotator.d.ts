@@ -69,6 +69,12 @@ export declare class DocumentAnnotator {
     private _resetHistory;
     /** Capture the current document as XFDF and append it to the history stack. */
     private _snapshot;
+    /**
+     * Push a notification to consumers that the history stack changed.
+     * Errors thrown by the listener are caught so they never derail the
+     * library's own state machine.
+     */
+    private _emitChange;
     destroy(): void;
     private _load;
     private _buildDOM;
