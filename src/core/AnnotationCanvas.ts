@@ -271,7 +271,10 @@ export class AnnotationCanvas {
   }
 
   /** Hex fill colour for new fillable shapes (rect, ellipse, polygon, …). */
-  setFillColor(color: string): void { this.fillColor = color }
+  setFillColor(color: string): void {
+    this.fillColor = color
+    this._applyFillToSelection()
+  }
 
   /**
    * Fill opacity 0–1 for new fillable shapes. `0` (default) is treated as
@@ -279,6 +282,7 @@ export class AnnotationCanvas {
    */
   setFillOpacity(opacity: number): void {
     this.fillOpacity = Math.max(0, Math.min(1, Number.isFinite(opacity) ? opacity : 0))
+    this._applyFillToSelection()
   }
 
   /** Stroke dash pattern for new strokable shapes. `[]` (or omitted) = solid. */
@@ -307,6 +311,22 @@ export class AnnotationCanvas {
   /** strokeDashArray value for new objects — null when solid. */
   private _activeDash(): number[] | null {
     return this.dashArray.length > 0 ? [...this.dashArray] : null
+  }
+
+  private readonly FILL_EXEMPT = new Set(['line', 'arrow', 'freehand', 'text', 'image', 'comment'])
+
+  /** Apply the current fill to any selected fillable shape on any page. */
+  private _applyFillToSelection(): void {
+    const fill = this._computeFill()
+    this._pages.forEach((p, pageIndex) => {
+      if (!p) return
+      const obj = p.fc.getActiveObject() as AnnotationObject | undefined
+      if (!obj || obj._helper || this.FILL_EXEMPT.has(obj.tool ?? '')) return
+      obj.set({ fill })
+      p.fc.renderAll()
+      this._markDirty(pageIndex)
+      this._fireEvent('modified', obj.tool ?? 'select', obj, pageIndex)
+    })
   }
 
   insertImage(fileOrUrl: File | string, pageIndex: number): void {
@@ -559,6 +579,13 @@ export class AnnotationCanvas {
       this._fireEvent('added', tool, finalShape as AnnotationObject, pageIndex)
     })
 
+    fc.on('object:modified', (e: { target?: FabricObject }) => {
+      const obj = e.target as AnnotationObject | undefined
+      if (!obj || obj._helper) return
+      this._markDirty(pageIndex)
+      this._fireEvent('modified', obj.tool ?? 'select', obj, pageIndex)
+    })
+
     const keyHandler = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && this.currentTool === 'polygon') this._cancelPolygon(pageState)
       if (e.key === 'Enter' && this.currentTool === 'polygon' && poly.points.length >= 3) {
@@ -610,6 +637,7 @@ export class AnnotationCanvas {
       stroke: this.strokeColor, strokeWidth: this.strokeWidth,
       fill: this._computeFill(),
       strokeDashArray: this._activeDash(),
+      objectCaching: false,
       selectable: false, evented: false,
       strokeUniform: true, _helper: true,
     }
@@ -640,12 +668,13 @@ export class AnnotationCanvas {
         height: Math.abs(current.y - start.y),
       })
     } else if (tool === 'circle') {
-      const ellipse = shape as Ellipse
-      ellipse.set({
-        left: Math.min(start.x, current.x),
-        top:  Math.min(start.y, current.y),
-        rx:   Math.abs(current.x - start.x) / 2,
-        ry:   Math.abs(current.y - start.y) / 2,
+      const rx = Math.abs(current.x - start.x)
+      const ry = Math.abs(current.y - start.y)
+      ;(shape as Ellipse).set({
+        left: start.x - rx,
+        top:  start.y - ry,
+        rx,
+        ry,
       })
     } else if (tool === 'line' || tool === 'arrow') {
       (shape as Line).set({ x2: current.x, y2: current.y })
@@ -704,13 +733,17 @@ export class AnnotationCanvas {
           left: Math.min(start.x, end.x), top: Math.min(start.y, end.y),
           width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y),
         })
-      case 'circle':
+      case 'circle': {
+        const rx = Math.abs(end.x - start.x)
+        const ry = Math.abs(end.y - start.y)
         return new Ellipse({
           ...base,
-          left: Math.min(start.x, end.x), top: Math.min(start.y, end.y),
-          rx: Math.abs(end.x - start.x) / 2, ry: Math.abs(end.y - start.y) / 2,
+          left: start.x - rx,
+          top:  start.y - ry,
+          rx, ry,
           originX: 'left', originY: 'top',
         })
+      }
       case 'line':
         return new Line([start.x, start.y, end.x, end.y], {
           ...base, fill: null, strokeLineCap: 'round',
