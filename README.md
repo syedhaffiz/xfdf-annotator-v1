@@ -244,6 +244,8 @@ annotator.setFillOpacity(0.3);     // 30% blue fill behind the stroke
 
 The library renders fills as `rgba(r, g, b, opacity)` so the stroke remains fully opaque on top.
 
+`setFillColor` and `setFillOpacity` also **immediately update the currently-selected shape** (if any), so a colour-picker or opacity slider gives live feedback without the user needing to redraw. This does not apply to lines, arrows, freehand, text, image stamps, or comment pins.
+
 ### Arc-cloud line style
 
 `setLineStyle('arc')` swaps the natural geometry of `rect`, `line`, and `polygon` shapes for a Fabric `Path` whose perimeter is a chain of outward-bulging quadrant arcs (a "revision cloud" / scalloped border). The substitution happens at draw time inside `_makeFinalShape` / `_finalizePolygon` — no post-hoc events, no microtask swaps. The resulting path is centred on the source shape's bounding-box centre via `setPositionByOrigin` so origin/scale/rotation differences can't shift it.
@@ -265,7 +267,7 @@ Caveats:
 
 ## Undo / Redo
 
-Built-in XFDF snapshot stack. Every annotation event (`added` / `removed`) pushes a snapshot; the stack is capped at 50 entries.
+Built-in XFDF snapshot stack. Every annotation event (`added` / `removed` / `modified`) pushes a snapshot; the stack is capped at 50 entries.
 
 ```ts
 annotator.canUndo();          // boolean
@@ -294,7 +296,7 @@ const annotator = new DocumentAnnotator({
 
 `onChange` is fired after every operation that mutates the history stack:
 
-- annotation added or removed by the user (via `_snapshot()`),
+- annotation added, removed, or modified by the user (via `_snapshot()`),
 - `undo()` and `redo()` calls,
 - `restore()` (and therefore `loadFile()` / `loadURL()`, since both restore a baseline).
 
@@ -421,7 +423,8 @@ const annotator = new DocumentAnnotator(options?);
 | `setDashArray(arr: number[]): void` | strokeDashArray for new strokable shapes (`[]` = solid) |
 | `setLineStyle(style: 'solid' \| 'arc'): void` | Solid stroke or arc-cloud border for new rect / line / polygon |
 | `getColor() / getStrokeWidth() / getFillColor() / getFillOpacity() / getDashArray() / getLineStyle()` | Read the current value of each style property |
-| `insertImage(file: File): void` | Stamp an image onto the active page (no-op in view mode) |
+| `insertImage(file: File): void` | Stamp an image onto the active page, centred (no-op in view mode) |
+| `insertImageAt(file: File, pageIndex: number, x: number, y: number): void` | Stamp an image onto a specific page at the given canvas coordinates (no-op in view mode) |
 | `save(): string` | Export annotations as XFDF XML |
 | `restore(xfdfString: string): Promise<void>` | Import annotations from XFDF |
 | `undo(): Promise<void>` | Revert to the previous snapshot (no-op if `canUndo()` is false) |
@@ -443,7 +446,7 @@ import { AnnotationCanvas } from 'xfdf-annotator';
 const canvas = new AnnotationCanvas({ user, onEvent, onCommentPlace });
 ```
 
-Key methods: `createCanvas`, `resize`, `destroy`, `setTool`, `setMode`, `setColor`, `setStrokeWidth`, `setFillColor`, `setFillOpacity`, `setDashArray`, `setLineStyle`, `insertImage`, `toJSON`, `loadFromData`.
+Key methods: `createCanvas`, `resize`, `destroy`, `setTool`, `setMode`, `setColor`, `setStrokeWidth`, `setFillColor`, `setFillOpacity`, `setDashArray`, `setLineStyle`, `insertImage`, `insertImageAt`, `toJSON`, `loadFromData`.
 
 ### `PDFRenderer` and `ImageRenderer`
 

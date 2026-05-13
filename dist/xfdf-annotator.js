@@ -574,10 +574,10 @@ var W = class {
 		});
 	}
 	setFillColor(e) {
-		this.fillColor = e;
+		this.fillColor = e, this._applyFillToSelection();
 	}
 	setFillOpacity(e) {
-		this.fillOpacity = Math.max(0, Math.min(1, Number.isFinite(e) ? e : 0));
+		this.fillOpacity = Math.max(0, Math.min(1, Number.isFinite(e) ? e : 0)), this._applyFillToSelection();
 	}
 	setDashArray(e) {
 		this.dashArray = Array.isArray(e) ? [...e] : [];
@@ -593,6 +593,22 @@ var W = class {
 	_activeDash() {
 		return this.dashArray.length > 0 ? [...this.dashArray] : null;
 	}
+	FILL_EXEMPT = new Set([
+		"line",
+		"arrow",
+		"freehand",
+		"text",
+		"image",
+		"comment"
+	]);
+	_applyFillToSelection() {
+		let e = this._computeFill();
+		this._pages.forEach((t, n) => {
+			if (!t) return;
+			let r = t.fc.getActiveObject();
+			!r || r._helper || this.FILL_EXEMPT.has(r.tool ?? "") || (r.set({ fill: e }), t.fc.renderAll(), this._markDirty(n), this._fireEvent("modified", r.tool ?? "select", r, n));
+		});
+	}
 	insertImage(e, t) {
 		let n = this._pages[t];
 		if (n) if (typeof e == "string") this._placeImage(e, n, t);
@@ -603,24 +619,36 @@ var W = class {
 			}, r.onerror = () => console.error("Failed to read image file"), r.readAsDataURL(e);
 		}
 	}
-	async _placeImage(e, t, n) {
+	insertImageAt(e, t, n, r) {
+		let i = this._pages[t];
+		if (i) if (typeof e == "string") this._placeImage(e, i, t, n, r);
+		else {
+			let a = new FileReader();
+			a.onload = (e) => {
+				this._placeImage(e.target?.result, i, t, n, r);
+			}, a.onerror = () => console.error("Failed to read image file"), a.readAsDataURL(e);
+		}
+	}
+	async _placeImage(e, t, n, r, a) {
 		try {
-			let r = await i.fromURL(e), a = t.baseW * .4;
-			(r.width ?? 0) > a && r.scale(a / (r.width ?? 1)), r.set({
-				left: (t.baseW - r.getScaledWidth()) / 2,
-				top: (t.baseH - r.getScaledHeight()) / 2
-			}), this._attachMeta(r, "image", n), r.selectable = this.mode === "edit" && this.currentTool === "select", r.evented = this.mode === "edit", t.fc.add(r), t.fc.setActiveObject(r), t.fc.renderAll();
-			let o = r, s = {
-				id: o.objectId ?? d(),
+			let o = await i.fromURL(e), s = t.baseW * .4;
+			(o.width ?? 0) > s && o.scale(s / (o.width ?? 1));
+			let c = o.getScaledWidth(), l = o.getScaledHeight();
+			o.set({
+				left: r === void 0 ? (t.baseW - c) / 2 : r - c / 2,
+				top: a === void 0 ? (t.baseH - l) / 2 : a - l / 2
+			}), this._attachMeta(o, "image", n), o.selectable = this.mode === "edit" && this.currentTool === "select", o.evented = this.mode === "edit", t.fc.add(o), t.fc.setActiveObject(o), t.fc.renderAll();
+			let u = o, f = {
+				id: u.objectId ?? d(),
 				description: `Inserted image on page ${n + 1}`,
 				action: "added",
 				tool: "image",
 				userId: this.user.id,
 				userName: this.user.displayName,
-				timestamp: o.timestamp ?? Date.now(),
+				timestamp: u.timestamp ?? Date.now(),
 				pageIndex: n
 			};
-			o.objectId !== void 0 && (s.objectId = o.objectId), this.onEvent(s);
+			u.objectId !== void 0 && (f.objectId = u.objectId), this.onEvent(f);
 		} catch (e) {
 			console.error("Failed to load image:", e);
 		}
@@ -760,6 +788,9 @@ var W = class {
 				y: r.y
 			});
 			!c || !this._isValidShape(c, o) || (this._attachMeta(c, o, t), c.selectable = o === "select", c.evented = !0, n.add(c), n.renderAll(), this._fireEvent("added", o, c, t));
+		}), n.on("object:modified", (e) => {
+			let n = e.target;
+			!n || n._helper || (this._markDirty(t), this._fireEvent("modified", n.tool ?? "select", n, t));
 		});
 		let o = (i) => {
 			i.key === "Escape" && this.currentTool === "polygon" && this._cancelPolygon(e), i.key === "Enter" && this.currentTool === "polygon" && r.points.length >= 3 && this._finalizePolygon(e, n, t);
@@ -787,6 +818,7 @@ var W = class {
 			strokeWidth: this.strokeWidth,
 			fill: this._computeFill(),
 			strokeDashArray: this._activeDash(),
+			objectCaching: !1,
 			selectable: !1,
 			evented: !1,
 			strokeUniform: !0,
@@ -798,7 +830,9 @@ var W = class {
 				left: t.x,
 				top: t.y,
 				width: 0,
-				height: 0
+				height: 0,
+				originX: "left",
+				originY: "top"
 			});
 			case "circle": return new r({
 				...n,
@@ -823,20 +857,29 @@ var W = class {
 		}
 	}
 	_updateShapePreview(e, t, n, r) {
-		t === "rectangle" ? e.set({
-			left: Math.min(n.x, r.x),
-			top: Math.min(n.y, r.y),
-			width: Math.abs(r.x - n.x),
-			height: Math.abs(r.y - n.y)
-		}) : t === "circle" ? e.set({
-			left: Math.min(n.x, r.x),
-			top: Math.min(n.y, r.y),
-			rx: Math.abs(r.x - n.x) / 2,
-			ry: Math.abs(r.y - n.y) / 2
-		}) : (t === "line" || t === "arrow") && e.set({
+		if (t === "rectangle") {
+			let t = r.x - n.x, i = r.y - n.y;
+			e.set({
+				left: t >= 0 ? n.x : r.x,
+				top: i >= 0 ? n.y : r.y,
+				width: Math.abs(t),
+				height: Math.abs(i),
+				originX: "left",
+				originY: "top"
+			});
+		} else if (t === "circle") {
+			let t = Math.abs(r.x - n.x), i = Math.abs(r.y - n.y);
+			e.set({
+				left: n.x - t,
+				top: n.y - i,
+				rx: t,
+				ry: i
+			});
+		} else (t === "line" || t === "arrow") && e.set({
 			x2: r.x,
 			y2: r.y
-		}), e.setCoords();
+		});
+		e.setCoords();
 	}
 	_makeFinalShape(e, t, n) {
 		let i = this._computeFill(), a = this._activeDash(), c = {
@@ -862,22 +905,30 @@ var W = class {
 			}, "center", "center"), f.setCoords(), f;
 		}
 		switch (e) {
-			case "rectangle": return new u({
-				...c,
-				left: Math.min(t.x, n.x),
-				top: Math.min(t.y, n.y),
-				width: Math.abs(n.x - t.x),
-				height: Math.abs(n.y - t.y)
-			});
-			case "circle": return new r({
-				...c,
-				left: Math.min(t.x, n.x),
-				top: Math.min(t.y, n.y),
-				rx: Math.abs(n.x - t.x) / 2,
-				ry: Math.abs(n.y - t.y) / 2,
-				originX: "left",
-				originY: "top"
-			});
+			case "rectangle": {
+				let e = n.x - t.x, r = n.y - t.y;
+				return new u({
+					...c,
+					left: e >= 0 ? t.x : n.x,
+					top: r >= 0 ? t.y : n.y,
+					width: Math.abs(e),
+					height: Math.abs(r),
+					originX: "left",
+					originY: "top"
+				});
+			}
+			case "circle": {
+				let e = Math.abs(n.x - t.x), i = Math.abs(n.y - t.y);
+				return new r({
+					...c,
+					left: t.x - e,
+					top: t.y - i,
+					rx: e,
+					ry: i,
+					originX: "left",
+					originY: "top"
+				});
+			}
 			case "line": return new o([
 				t.x,
 				t.y,
@@ -1365,7 +1416,7 @@ var W = class {
 		}, this.user = this._resolveUser(e), this.userId = this.user.id, this._log = new G(this._opts.logContainerId), this._canvas = new W({
 			user: this.user,
 			onEvent: (e) => {
-				this._log.addEvent(e), (e.action === "added" || e.action === "removed") && this._snapshot();
+				this._log.addEvent(e), (e.action === "added" || e.action === "removed" || e.action === "modified") && this._snapshot();
 			},
 			onCommentPlace: (e, t, n, r) => {
 				this._comments.startPlacement(e, t, n, r);
@@ -1447,6 +1498,9 @@ var W = class {
 	}
 	insertImage(e) {
 		this._mode !== "view" && this._canvas.insertImage(e, this._activePageIndex);
+	}
+	insertImageAt(e, t, n, r) {
+		this._mode !== "view" && (this._activePageIndex = t, this._canvas.insertImageAt(e, t, n, r));
 	}
 	save() {
 		let e = this._canvas.toJSON().map(({ pageIndex: e, canvasJSON: t }) => ({

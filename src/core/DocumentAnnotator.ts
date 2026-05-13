@@ -177,6 +177,12 @@ export class DocumentAnnotator {
     this._canvas.insertImage(file, this._activePageIndex)
   }
 
+  insertImageAt(file: File, pageIndex: number, x: number, y: number): void {
+    if (this._mode === 'view') return
+    this._activePageIndex = pageIndex
+    this._canvas.insertImageAt(file, pageIndex, x, y)
+  }
+
   save(): string {
     const canvasPages = this._canvas.toJSON()
 

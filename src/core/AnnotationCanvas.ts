@@ -342,15 +342,30 @@ export class AnnotationCanvas {
     }
   }
 
-  private async _placeImage(dataUrl: string, p: PageState, pageIndex: number): Promise<void> {
+  insertImageAt(fileOrUrl: File | string, pageIndex: number, x: number, y: number): void {
+    const p = this._pages[pageIndex]
+    if (!p) return
+    if (typeof fileOrUrl === 'string') {
+      void this._placeImage(fileOrUrl, p, pageIndex, x, y)
+    } else {
+      const reader   = new FileReader()
+      reader.onload  = (e) => { void this._placeImage(e.target?.result as string, p, pageIndex, x, y) }
+      reader.onerror = () => console.error('Failed to read image file')
+      reader.readAsDataURL(fileOrUrl)
+    }
+  }
+
+  private async _placeImage(dataUrl: string, p: PageState, pageIndex: number, cx?: number, cy?: number): Promise<void> {
     try {
       const img = await FabricImage.fromURL(dataUrl)
       const maxW = p.baseW * 0.4
       if ((img.width ?? 0) > maxW) img.scale(maxW / (img.width ?? 1))
 
+      const w = img.getScaledWidth()
+      const h = img.getScaledHeight()
       img.set({
-        left: (p.baseW - img.getScaledWidth())  / 2,
-        top:  (p.baseH - img.getScaledHeight()) / 2,
+        left: cx !== undefined ? cx - w / 2 : (p.baseW - w) / 2,
+        top:  cy !== undefined ? cy - h / 2 : (p.baseH - h) / 2,
       })
 
       this._attachMeta(img as AnnotationObject, 'image', pageIndex)
@@ -643,7 +658,7 @@ export class AnnotationCanvas {
     }
     switch (tool) {
       case 'rectangle':
-        return new Rect({ ...base, left: start.x, top: start.y, width: 0, height: 0 })
+        return new Rect({ ...base, left: start.x, top: start.y, width: 0, height: 0, originX: 'left', originY: 'top' })
       case 'circle':
         return new Ellipse({ ...base, left: start.x, top: start.y, rx: 0, ry: 0, originX: 'left', originY: 'top' })
       case 'line':
@@ -661,11 +676,15 @@ export class AnnotationCanvas {
     current: { x: number; y: number }
   ): void {
     if (tool === 'rectangle') {
+      const dw = current.x - start.x
+      const dh = current.y - start.y
       shape.set({
-        left:   Math.min(start.x, current.x),
-        top:    Math.min(start.y, current.y),
-        width:  Math.abs(current.x - start.x),
-        height: Math.abs(current.y - start.y),
+        left:   dw >= 0 ? start.x : current.x,
+        top:    dh >= 0 ? start.y : current.y,
+        width:  Math.abs(dw),
+        height: Math.abs(dh),
+        originX: 'left',
+        originY: 'top',
       })
     } else if (tool === 'circle') {
       const rx = Math.abs(current.x - start.x)
@@ -727,12 +746,18 @@ export class AnnotationCanvas {
     }
 
     switch (tool) {
-      case 'rectangle':
+      case 'rectangle': {
+        const dw = end.x - start.x
+        const dh = end.y - start.y
         return new Rect({
           ...base,
-          left: Math.min(start.x, end.x), top: Math.min(start.y, end.y),
-          width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y),
+          left:   dw >= 0 ? start.x : end.x,
+          top:    dh >= 0 ? start.y : end.y,
+          width:  Math.abs(dw),
+          height: Math.abs(dh),
+          originX: 'left', originY: 'top',
         })
+      }
       case 'circle': {
         const rx = Math.abs(end.x - start.x)
         const ry = Math.abs(end.y - start.y)

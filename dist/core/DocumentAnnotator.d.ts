@@ -52,6 +52,7 @@ export declare class DocumentAnnotator {
     getLineStyle(): LineStyle;
     clearLog(): void;
     insertImage(file: File): void;
+    insertImageAt(file: File, pageIndex: number, x: number, y: number): void;
     save(): string;
     restore(xfdfString: string): Promise<void>;
     /** True if there's an earlier state to revert to. */
