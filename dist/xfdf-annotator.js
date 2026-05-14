@@ -350,7 +350,7 @@ function M(e) {
 }
 //#endregion
 //#region src/core/PDFRenderer.ts
-var N = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs", P = class {
+var N = `https://unpkg.com/pdfjs-dist@${e.version}/build/pdf.worker.min.mjs`, P = class {
 	_pdf = null;
 	_baseViewports = [];
 	_pdfPages = [];

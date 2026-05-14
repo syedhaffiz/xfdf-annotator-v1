@@ -5,8 +5,10 @@ import type { IRenderer, PageDimensions } from '../types/index'
 // CDN fallback URL used when the consumer hasn't configured a worker.
 // Applied lazily inside `load()` (NOT at module load) so any consumer
 // override is preserved regardless of import order.
+// unpkg is used instead of cdnjs because it mirrors every npm release
+// immediately, so the URL is always valid for the installed version.
 const DEFAULT_WORKER_SRC =
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs'
+  `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
 
 interface PdfDims {
   widthPts: number
