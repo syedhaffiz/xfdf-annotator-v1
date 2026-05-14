@@ -56,7 +56,11 @@ export declare class AnnotationCanvas {
     private _computeFill;
     /** strokeDashArray value for new objects — null when solid. */
     private _activeDash;
+    private readonly FILL_EXEMPT;
+    /** Apply the current fill to any selected fillable shape on any page. */
+    private _applyFillToSelection;
     insertImage(fileOrUrl: File | string, pageIndex: number): void;
+    insertImageAt(fileOrUrl: File | string, pageIndex: number, x: number, y: number): void;
     private _placeImage;
     toJSON(): Array<{
         pageIndex: number;

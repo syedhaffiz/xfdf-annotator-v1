@@ -86,7 +86,7 @@ export class DocumentAnnotator {
         // Capture a history snapshot for "real" annotation events (drew /
         // erased). `_suppressHistory` is set during undo/redo and during
         // load/restore, so those don't pollute the stack.
-        if (ev.action === 'added' || ev.action === 'removed') {
+        if (ev.action === 'added' || ev.action === 'removed' || ev.action === 'modified') {
           this._snapshot()
         }
       },
@@ -175,6 +175,12 @@ export class DocumentAnnotator {
   insertImage(file: File): void {
     if (this._mode === 'view') return
     this._canvas.insertImage(file, this._activePageIndex)
+  }
+
+  insertImageAt(file: File, pageIndex: number, x: number, y: number): void {
+    if (this._mode === 'view') return
+    this._activePageIndex = pageIndex
+    this._canvas.insertImageAt(file, pageIndex, x, y)
   }
 
   save(): string {
