@@ -33,7 +33,7 @@ export class DocumentAnnotator {
   /** @deprecated use `user.id`. */
   readonly userId: string
 
-  private _opts: DocumentAnnotatorOptions & Required<Omit<DocumentAnnotatorOptions, 'user' | 'userId' | 'onChange'>>
+  private _opts: DocumentAnnotatorOptions & Required<Omit<DocumentAnnotatorOptions, 'user' | 'userId' | 'onChange' | 'onScaleChange'>>
   private _renderer:        Renderer | null = null
   private _docType:         DocumentType | null = null
   private _docLabel         = ''
@@ -42,6 +42,8 @@ export class DocumentAnnotator {
   private _blobURL:         string | null = null
   private _mode:            AnnotationMode = 'edit'
   private _activePageIndex  = 0
+  private _wheelHandler: ((event: WheelEvent) => void) | null = null
+  private _scaleResolver: ((containerWidth: number) => number) | null = null
 
   private _log:      ActivityLog
   private _canvas:   AnnotationCanvas
@@ -103,6 +105,7 @@ export class DocumentAnnotator {
     })
 
     this._bindResize()
+    this._bindZoom()
   }
 
   /** Internal: pick the right User from `options`, falling back as documented. */
@@ -172,6 +175,35 @@ export class DocumentAnnotator {
 
   clearLog(): void                    { this._log.clear() }
 
+  /** Current page scale (display pixels per base unit). */
+  getScale(): number { return this._currentScale }
+
+  /** Base (unscaled) size of a page, or `null` when no document is loaded. */
+  getPageSize(pageIndex = 0): { width: number; height: number } | null {
+    const dims = this._baseDims[pageIndex]
+    return dims ? { ...dims } : null
+  }
+
+  /** Apply an explicit page scale to every page, canvas and comment pin. */
+  async setScale(scale: number): Promise<void> {
+    if (!Number.isFinite(scale) || scale <= 0 || !this._baseDims.length) return
+    await this._resizePages(scale)
+  }
+
+  /**
+   * Override how the scale is computed when the viewer panel resizes
+   * (e.g. fit-to-page × user zoom). Pass `null` to restore the default
+   * fit-to-width behaviour.
+   */
+  setScaleResolver(resolver: ((containerWidth: number) => number) | null): void {
+    this._scaleResolver = resolver
+  }
+
+  eraseAll(): void {
+    if (this._mode === 'view') return
+    this._canvas.eraseAll()
+  }
+
   insertImage(file: File): void {
     if (this._mode === 'view') return
     this._canvas.insertImage(file, this._activePageIndex)
@@ -184,6 +216,7 @@ export class DocumentAnnotator {
   }
 
   save(): string {
+    this._canvas.commitTextEdits()
     const canvasPages = this._canvas.toJSON()
 
     const pages = canvasPages.map(({ pageIndex, canvasJSON }) => {
@@ -274,6 +307,9 @@ export class DocumentAnnotator {
   }
 
   destroy(): void {
+    const viewport = document.getElementById(this._opts.viewportId)
+    if (viewport && this._wheelHandler) viewport.removeEventListener('wheel', this._wheelHandler)
+    this._wheelHandler = null
     this._canvas.destroy()
     if (this._renderer) this._renderer.destroy()
     if (this._blobURL)  URL.revokeObjectURL(this._blobURL)
@@ -453,48 +489,91 @@ export class DocumentAnnotator {
     const onResize = debounce(async () => {
       if (!this._renderer || !this._baseDims.length) return
       const containerW = this._viewerWidth()
-      const newScale   = this._renderer.getScale(containerW)
+      const newScale   = this._scaleResolver?.(containerW) ?? this._renderer.getScale(containerW)
       if (Math.abs(newScale - this._currentScale) < 0.01) return
-      this._currentScale = newScale
-
-      const pagesEl = document.getElementById(this._opts.pagesContainerId)
-      if (!pagesEl) return
-
-      const pdfJobs: Array<{ i: number; canvasEl: HTMLCanvasElement }> = []
-
-      for (let i = 0; i < this._baseDims.length; i++) {
-        const { width: bW, height: bH } = this._baseDims[i]
-        const physW   = Math.round(bW * newScale)
-        const physH   = Math.round(bH * newScale)
-        const wrapper = pagesEl.querySelector(`[data-page-index="${i}"]`)
-        if (!wrapper) continue
-
-        const layers = wrapper.querySelector('.page-layers') as HTMLElement | null
-        if (layers) { layers.style.width = physW + 'px'; layers.style.height = physH + 'px' }
-
-        if (this._docType === 'pdf') {
-          const c = wrapper.querySelector('.pdf-layer') as HTMLCanvasElement | null
-          if (c) pdfJobs.push({ i, canvasEl: c })
-        } else {
-          const img = wrapper.querySelector('.image-layer') as HTMLElement | null
-          if (img) { img.style.width = physW + 'px'; img.style.height = physH + 'px' }
-        }
-
-        this._canvas.resize(i, newScale)
-      }
-
-      if (pdfJobs.length && this._renderer instanceof PDFRenderer) {
-        await Promise.all(
-          pdfJobs.map(({ i, canvasEl }) =>
-            (this._renderer as PDFRenderer).renderPage(i, canvasEl, newScale)
-          )
-        )
-      }
-
-      this._comments.repositionAll(newScale)
+      await this._resizePages(newScale)
     }, 250)
 
     new ResizeObserver(onResize).observe(panel)
+  }
+
+  private _bindZoom(): void {
+    const viewport = document.getElementById(this._opts.viewportId)
+    if (!viewport) return
+
+    this._wheelHandler = (event: WheelEvent): void => {
+      if (!event.ctrlKey || !this._renderer || !this._baseDims.length) return
+      event.preventDefault()
+      void this._zoomAt(event, viewport).catch((err: unknown) => {
+        console.error('[DocumentAnnotator] Failed to zoom document:', err)
+      })
+    }
+    viewport.addEventListener('wheel', this._wheelHandler, { passive: false })
+  }
+
+  private async _zoomAt(event: WheelEvent, viewport: HTMLElement): Promise<void> {
+    const pagesEl = document.getElementById(this._opts.pagesContainerId)
+    const pageLayers = document.elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>('.page-layers')
+    if (!pagesEl || !pageLayers || !pagesEl.contains(pageLayers)) return
+
+    const oldScale = this._currentScale
+    const newScale = Math.max(0.25, Math.min(4, oldScale * Math.exp(-event.deltaY * 0.001)))
+    if (newScale === oldScale) return
+
+    const layersRect = pageLayers.getBoundingClientRect()
+    const localX = (event.clientX - layersRect.left) / oldScale
+    const localY = (event.clientY - layersRect.top) / oldScale
+
+    const render = this._resizePages(newScale)
+
+    const newLayersRect = pageLayers.getBoundingClientRect()
+    viewport.scrollLeft += newLayersRect.left + localX * newScale - event.clientX
+    viewport.scrollTop += newLayersRect.top + localY * newScale - event.clientY
+    try { this._opts.onScaleChange?.(newScale) } catch (err) {
+      console.error('[DocumentAnnotator] onScaleChange threw:', err)
+    }
+    await render
+  }
+
+  private async _resizePages(newScale: number): Promise<void> {
+    this._currentScale = newScale
+    const pagesEl = document.getElementById(this._opts.pagesContainerId)
+    if (!pagesEl) return
+
+    const pdfJobs: Array<{ pageIndex: number; canvasEl: HTMLCanvasElement }> = []
+    for (let i = 0; i < this._baseDims.length; i++) {
+      const { width, height } = this._baseDims[i]
+      const wrapper = pagesEl.querySelector(`[data-page-index="${i}"]`)
+      if (!wrapper) continue
+
+      const layers = wrapper.querySelector('.page-layers') as HTMLElement | null
+      if (layers) {
+        layers.style.width = `${Math.round(width * newScale)}px`
+        layers.style.height = `${Math.round(height * newScale)}px`
+      }
+
+      if (this._docType === 'pdf') {
+        const canvas = wrapper.querySelector('.pdf-layer') as HTMLCanvasElement | null
+        if (canvas) pdfJobs.push({ pageIndex: i, canvasEl: canvas })
+      } else {
+        const image = wrapper.querySelector('.image-layer') as HTMLElement | null
+        if (image) {
+          image.style.width = `${Math.round(width * newScale)}px`
+          image.style.height = `${Math.round(height * newScale)}px`
+        }
+      }
+
+      this._canvas.resize(i, newScale)
+    }
+
+    this._comments.repositionAll(newScale)
+    const renderer = this._renderer
+    if (pdfJobs.length && renderer instanceof PDFRenderer) {
+      await Promise.all(pdfJobs.map(({ pageIndex, canvasEl }) =>
+        renderer.renderPage(pageIndex, canvasEl, newScale)
+      ))
+    }
   }
 
   // ── Private: UI helpers ───────────────────────────────────────────

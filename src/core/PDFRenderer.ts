@@ -1,5 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist'
-import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist'
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist'
 import type { IRenderer, PageDimensions } from '../types/index'
 
 // CDN fallback URL used when the consumer hasn't configured a worker.
@@ -16,6 +16,7 @@ interface PdfDims {
 }
 
 export class PDFRenderer implements IRenderer {
+  private _task: PDFDocumentLoadingTask | null = null
   private _pdf: PDFDocumentProxy | null = null
   private _baseViewports: PageViewport[] = []
   private _pdfPages: PDFPageProxy[] = []
@@ -34,6 +35,7 @@ export class PDFRenderer implements IRenderer {
     }
 
     const task   = pdfjsLib.getDocument({ url, cMapPacked: true })
+    this._task   = task
     this._pdf    = await task.promise
     this._pageCount = this._pdf.numPages
 
@@ -98,7 +100,8 @@ export class PDFRenderer implements IRenderer {
 
   destroy(): void {
     this._renderTasks.forEach((t) => t?.cancel())
-    if (this._pdf) { void this._pdf.destroy(); this._pdf = null }
+    if (this._task) { void this._task.destroy(); this._task = null }
+    this._pdf = null
     this._baseViewports = []
     this._pdfPages      = []
     this._renderTasks   = []

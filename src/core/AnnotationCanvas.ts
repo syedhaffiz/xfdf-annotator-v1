@@ -202,6 +202,7 @@ export class AnnotationCanvas {
     }
 
     this._pages[pageIndex] = pageState
+    this._bindOutsideCommit()
     this._setupEvents(pageState, pageIndex)
     this._applyToolTo(fc)
 
@@ -219,7 +220,30 @@ export class AnnotationCanvas {
     p.fc.renderAll()
   }
 
+  // Fabric's IText never exits editing on blur, so a click on the toolbar,
+  // log or another page would leave the text uncommitted and unlogged.
+  private _outsidePointerHandler: ((e: PointerEvent) => void) | null = null
+
+  private _bindOutsideCommit(): void {
+    if (this._outsidePointerHandler) return
+    this._outsidePointerHandler = (e: PointerEvent): void => {
+      const target = e.target as Node | null
+      this._pages.forEach((p) => {
+        if (!p || (target && p.fc.wrapperEl.contains(target))) return
+        p.fc.getObjects().forEach((obj) => {
+          if (obj instanceof IText && obj.isEditing) obj.exitEditing()
+        })
+        p.fc.renderAll()
+      })
+    }
+    document.addEventListener('pointerdown', this._outsidePointerHandler, true)
+  }
+
   destroy(): void {
+    if (this._outsidePointerHandler) {
+      document.removeEventListener('pointerdown', this._outsidePointerHandler, true)
+      this._outsidePointerHandler = null
+    }
     this._pages.forEach((p) => {
       if (!p) return
       if (p._keyHandler) document.removeEventListener('keydown', p._keyHandler)
@@ -233,6 +257,7 @@ export class AnnotationCanvas {
   // ── Tool / style control ──────────────────────────────────────────
 
   setTool(tool: AnnotationTool): void {
+    this.commitTextEdits()
     this.currentTool = tool
     this._pages.forEach((p) => {
       if (!p) return
@@ -242,11 +267,49 @@ export class AnnotationCanvas {
   }
 
   setMode(mode: AnnotationMode): void {
+    this.commitTextEdits()
     this.mode = mode
     this._pages.forEach((p) => {
       if (!p) return
       this._cancelPolygon(p)
       this._applyModeTo(p.fc)
+    })
+  }
+
+  eraseAll(): void {
+    if (this.mode === 'view') return
+
+    let removedCount = 0
+    this._pages.forEach((page, pageIndex) => {
+      if (!page) return
+      this._cancelPolygon(page)
+      const objects = page.fc.getObjects().filter((obj) => !(obj as AnnotationObject)._helper)
+      if (!objects.length) return
+
+      page.fc.remove(...objects)
+      page.fc.discardActiveObject()
+      page.fc.renderAll()
+      this._markDirty(pageIndex)
+      removedCount += objects.length
+    })
+
+    if (removedCount === 0) return
+    this.onEvent({
+      id: generateUUID(),
+      description: `Erased all ${removedCount} annotations`,
+      action: 'removed',
+      tool: 'erase-all',
+      userId: this.user.id,
+      userName: this.user.displayName,
+      timestamp: Date.now(),
+    })
+  }
+
+  commitTextEdits(): void {
+    this._pages.forEach((page) => {
+      page?.fc.getObjects().forEach((obj) => {
+        if (obj instanceof IText && obj.isEditing) obj.exitEditing()
+      })
     })
   }
 
@@ -595,9 +658,11 @@ export class AnnotationCanvas {
     })
 
     fc.on('object:modified', (e: { target?: FabricObject }) => {
-      const obj = e.target as AnnotationObject | undefined
+      const obj = e.target as (AnnotationObject & { _skipModified?: boolean }) | undefined
       if (!obj || obj._helper) return
       this._markDirty(pageIndex)
+      // Fabric fires this right after the first text commit; it's the "added" event, not an edit.
+      if (obj._skipModified) { obj._skipModified = false; return }
       this._fireEvent('modified', obj.tool ?? 'select', obj, pageIndex)
     })
 
@@ -620,9 +685,9 @@ export class AnnotationCanvas {
 
     const meta: ActivityEntry = {
       id:          target.objectId ?? generateUUID(),
-      description: `Erased on page ${pageIndex + 1}`,
+      description: `Erased ${target.tool ?? 'annotation'} on page ${pageIndex + 1}`,
       action:      'removed',
-      tool:        target.tool ?? 'eraser',
+      tool:        'eraser',
       userId:      this.user.id,
       userName:    this.user.displayName,
       timestamp:   Date.now(),
@@ -979,10 +1044,6 @@ export class AnnotationCanvas {
       cursorColor: this.strokeColor, padding: 4,
     })
 
-    fc.add(itext)
-    fc.setActiveObject(itext)
-    itext.enterEditing()
-
     let committed = false
     itext.on('editing:exited', () => {
       if (committed) return
@@ -993,8 +1054,13 @@ export class AnnotationCanvas {
         return
       }
       this._attachMeta(itext as AnnotationObject, 'text', pageIndex)
+      ;(itext as AnnotationObject & { _skipModified?: boolean })._skipModified = true
       this._fireEvent('added', 'text', itext as AnnotationObject, pageIndex)
     })
+
+    fc.add(itext)
+    fc.setActiveObject(itext)
+    itext.enterEditing()
   }
 
   // ── Private: metadata ─────────────────────────────────────────────
@@ -1031,6 +1097,10 @@ export class AnnotationCanvas {
       pageIndex,
     }
     if (obj.objectId !== undefined) base.objectId = obj.objectId
+    if (tool === 'text' && obj.text) {
+      base.text = obj.text
+      base.description = `Added text "${obj.text}" on page ${pageIndex + 1}`
+    }
     this.onEvent(base)
   }
 }

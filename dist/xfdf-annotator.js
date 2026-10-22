@@ -73,9 +73,7 @@ function D(e, t) {
 		case "Q":
 			n.push(C(r[3], r[4], t));
 			break;
-		case "C":
-			n.push(C(r[5], r[6], t));
-			break;
+		case "C": n.push(C(r[5], r[6], t));
 	}
 	return n.join(";");
 }
@@ -351,6 +349,7 @@ function M(e) {
 //#endregion
 //#region src/core/PDFRenderer.ts
 var N = `https://unpkg.com/pdfjs-dist@${e.version}/build/pdf.worker.min.mjs`, P = class {
+	_task = null;
 	_pdf = null;
 	_baseViewports = [];
 	_pdfPages = [];
@@ -365,7 +364,7 @@ var N = `https://unpkg.com/pdfjs-dist@${e.version}/build/pdf.worker.min.mjs`, P 
 			url: t,
 			cMapPacked: !0
 		});
-		return this._pdf = await n.promise, this._pageCount = this._pdf.numPages, this._pdfPages = await Promise.all(Array.from({ length: this._pageCount }, (e, t) => this._pdf.getPage(t + 1))), this._baseViewports = this._pdfPages.map((e) => e.getViewport({ scale: 1 })), this._pageCount;
+		return this._task = n, this._pdf = await n.promise, this._pageCount = this._pdf.numPages, this._pdfPages = await Promise.all(Array.from({ length: this._pageCount }, (e, t) => this._pdf.getPage(t + 1))), this._baseViewports = this._pdfPages.map((e) => e.getViewport({ scale: 1 })), this._pageCount;
 	}
 	async renderPage(e, t, n) {
 		let r = n ?? 1, i = this._pdfPages[e];
@@ -417,7 +416,7 @@ var N = `https://unpkg.com/pdfjs-dist@${e.version}/build/pdf.worker.min.mjs`, P 
 		};
 	}
 	destroy() {
-		this._renderTasks.forEach((e) => e?.cancel()), this._pdf &&= (this._pdf.destroy(), null), this._baseViewports = [], this._pdfPages = [], this._renderTasks = [], this._pageCount = 0;
+		this._renderTasks.forEach((e) => e?.cancel()), this._task &&= (this._task.destroy(), null), this._pdf = null, this._baseViewports = [], this._pdfPages = [], this._renderTasks = [], this._pageCount = 0;
 	}
 }, F = class {
 	naturalWidth = 0;
@@ -515,15 +514,15 @@ var W = class {
 		this.user = e, this.onEvent = t, this.onCommentPlace = n ?? (() => {}), this._pages = [], this._dirtyPages = /* @__PURE__ */ new Set(), this._jsonCache = /* @__PURE__ */ new Map();
 	}
 	createCanvas(e, n, r, i, a) {
-		let o = new t(e, {
-			width: Math.round(n * a),
-			height: Math.round(r * a),
+		let o = Math.round(n * a), s = Math.round(r * a), c = new t(e, {
+			width: o,
+			height: s,
 			selection: !0,
 			preserveObjectStacking: !0
 		});
-		o.wrapperEl.style.cssText = "position:absolute;top:0;left:0;", o.setZoom(a);
-		let s = {
-			fc: o,
+		c.wrapperEl.style.cssText = "position:absolute;top:0;left:0;", c.setZoom(a);
+		let l = {
+			fc: c,
 			baseW: n,
 			baseH: r,
 			poly: {
@@ -539,7 +538,7 @@ var W = class {
 			},
 			erase: { active: !1 }
 		};
-		return this._pages[i] = s, this._setupEvents(s, i), this._applyToolTo(o), o;
+		return this._pages[i] = l, this._bindOutsideCommit(), this._setupEvents(l, i), this._applyToolTo(c), c;
 	}
 	resize(e, t) {
 		let n = this._pages[e];
@@ -548,19 +547,55 @@ var W = class {
 			height: Math.round(n.baseH * t)
 		}), n.fc.renderAll());
 	}
+	_outsidePointerHandler = null;
+	_bindOutsideCommit() {
+		this._outsidePointerHandler || (this._outsidePointerHandler = (e) => {
+			let t = e.target;
+			this._pages.forEach((e) => {
+				!e || t && e.fc.wrapperEl.contains(t) || (e.fc.getObjects().forEach((e) => {
+					e instanceof a && e.isEditing && e.exitEditing();
+				}), e.fc.renderAll());
+			});
+		}, document.addEventListener("pointerdown", this._outsidePointerHandler, !0));
+	}
 	destroy() {
-		this._pages.forEach((e) => {
+		this._outsidePointerHandler &&= (document.removeEventListener("pointerdown", this._outsidePointerHandler, !0), null), this._pages.forEach((e) => {
 			e && (e._keyHandler && document.removeEventListener("keydown", e._keyHandler), e.fc.dispose());
 		}), this._pages = [], this._dirtyPages = /* @__PURE__ */ new Set(), this._jsonCache = /* @__PURE__ */ new Map();
 	}
 	setTool(e) {
-		this.currentTool = e, this._pages.forEach((e) => {
+		this.commitTextEdits(), this.currentTool = e, this._pages.forEach((e) => {
 			e && (this._cancelPolygon(e), this._applyToolTo(e.fc));
 		});
 	}
 	setMode(e) {
-		this.mode = e, this._pages.forEach((e) => {
+		this.commitTextEdits(), this.mode = e, this._pages.forEach((e) => {
 			e && (this._cancelPolygon(e), this._applyModeTo(e.fc));
+		});
+	}
+	eraseAll() {
+		if (this.mode === "view") return;
+		let e = 0;
+		this._pages.forEach((t, n) => {
+			if (!t) return;
+			this._cancelPolygon(t);
+			let r = t.fc.getObjects().filter((e) => !e._helper);
+			r.length && (t.fc.remove(...r), t.fc.discardActiveObject(), t.fc.renderAll(), this._markDirty(n), e += r.length);
+		}), e !== 0 && this.onEvent({
+			id: d(),
+			description: `Erased all ${e} annotations`,
+			action: "removed",
+			tool: "erase-all",
+			userId: this.user.id,
+			userName: this.user.displayName,
+			timestamp: Date.now()
+		});
+	}
+	commitTextEdits() {
+		this._pages.forEach((e) => {
+			e?.fc.getObjects().forEach((e) => {
+				e instanceof a && e.isEditing && e.exitEditing();
+			});
 		});
 	}
 	setColor(e) {
@@ -593,7 +628,7 @@ var W = class {
 	_activeDash() {
 		return this.dashArray.length > 0 ? [...this.dashArray] : null;
 	}
-	FILL_EXEMPT = new Set([
+	FILL_EXEMPT = /* @__PURE__ */ new Set([
 		"line",
 		"arrow",
 		"freehand",
@@ -611,22 +646,26 @@ var W = class {
 	}
 	insertImage(e, t) {
 		let n = this._pages[t];
-		if (n) if (typeof e == "string") this._placeImage(e, n, t);
-		else {
-			let r = new FileReader();
-			r.onload = (e) => {
-				this._placeImage(e.target?.result, n, t);
-			}, r.onerror = () => console.error("Failed to read image file"), r.readAsDataURL(e);
+		if (n) {
+			if (typeof e == "string") this._placeImage(e, n, t);
+			else {
+				let r = new FileReader();
+				r.onload = (e) => {
+					this._placeImage(e.target?.result, n, t);
+				}, r.onerror = () => console.error("Failed to read image file"), r.readAsDataURL(e);
+			}
 		}
 	}
 	insertImageAt(e, t, n, r) {
 		let i = this._pages[t];
-		if (i) if (typeof e == "string") this._placeImage(e, i, t, n, r);
-		else {
-			let a = new FileReader();
-			a.onload = (e) => {
-				this._placeImage(e.target?.result, i, t, n, r);
-			}, a.onerror = () => console.error("Failed to read image file"), a.readAsDataURL(e);
+		if (i) {
+			if (typeof e == "string") this._placeImage(e, i, t, n, r);
+			else {
+				let a = new FileReader();
+				a.onload = (e) => {
+					this._placeImage(e.target?.result, i, t, n, r);
+				}, a.onerror = () => console.error("Failed to read image file"), a.readAsDataURL(e);
+			}
 		}
 	}
 	async _placeImage(e, t, n, r, a) {
@@ -748,7 +787,6 @@ var W = class {
 				case "comment":
 					if (r.target) break;
 					this.onCommentPlace(t, o.x, o.y, r.e);
-					break;
 			}
 		}), n.on("mouse:move", (e) => {
 			if (this.mode === "view") return;
@@ -787,10 +825,10 @@ var W = class {
 				x: r.x,
 				y: r.y
 			});
-			!c || !this._isValidShape(c, o) || (this._attachMeta(c, o, t), c.selectable = o === "select", c.evented = !0, n.add(c), n.renderAll(), this._fireEvent("added", o, c, t));
+			c && this._isValidShape(c, o) && (this._attachMeta(c, o, t), c.selectable = o === "select", c.evented = !0, n.add(c), n.renderAll(), this._fireEvent("added", o, c, t));
 		}), n.on("object:modified", (e) => {
 			let n = e.target;
-			!n || n._helper || (this._markDirty(t), this._fireEvent("modified", n.tool ?? "select", n, t));
+			n && !n._helper && (this._markDirty(t), n._skipModified ? n._skipModified = !1 : this._fireEvent("modified", n.tool ?? "select", n, t));
 		});
 		let o = (i) => {
 			i.key === "Escape" && this.currentTool === "polygon" && this._cancelPolygon(e), i.key === "Enter" && this.currentTool === "polygon" && r.points.length >= 3 && this._finalizePolygon(e, n, t);
@@ -802,9 +840,9 @@ var W = class {
 		if (!r || r._helper) return;
 		let i = {
 			id: r.objectId ?? d(),
-			description: `Erased on page ${n + 1}`,
+			description: `Erased ${r.tool ?? "annotation"} on page ${n + 1}`,
 			action: "removed",
-			tool: r.tool ?? "eraser",
+			tool: "eraser",
 			userId: this.user.id,
 			userName: this.user.displayName,
 			timestamp: Date.now(),
@@ -946,8 +984,8 @@ var W = class {
 	_makeArrow(e, t) {
 		let n = t.x - e.x, r = t.y - e.y, i = Math.hypot(n, r);
 		if (i < L) return null;
-		let a = n / i, o = r / i, c = -o, l = a, u = Math.max(R, this.strokeWidth * 4), d = t.x - a * u * .7, f = t.y - o * u * .7, p = t.x - a * u, m = t.y - o * u, h = p + c * u * .4, g = m + l * u * .4, _ = p - c * u * .4, v = m - l * u * .4;
-		return new s(`M ${e.x} ${e.y} L ${d} ${f} M ${h} ${g} L ${t.x} ${t.y} L ${_} ${v}`, {
+		let a = n / i, o = r / i, c = -o, l = a, u = Math.max(R, this.strokeWidth * 4), d = t.x - a * u * .7, f = t.y - o * u * .7, p = t.x - a * u, m = t.y - o * u, h = p + c * u * .4, g = m + l * u * .4, _ = p - c * u * .4, v = m - l * u * .4, y = `M ${e.x} ${e.y} L ${d} ${f} M ${h} ${g} L ${t.x} ${t.y} L ${_} ${v}`;
+		return new s(y, {
 			stroke: this.strokeColor,
 			strokeWidth: this.strokeWidth,
 			fill: "transparent",
@@ -1051,7 +1089,7 @@ var W = class {
 		r.helpers.forEach((e) => t.remove(e)), r.rubberband && t.remove(r.rubberband);
 		let i = this._computeFill(), a = this._activeDash(), o;
 		if (this.lineStyle === "arc") {
-			let e = Math.min(...r.points.map((e) => e.x)), t = Math.max(...r.points.map((e) => e.x)), n = Math.min(...r.points.map((e) => e.y)), c = Math.max(...r.points.map((e) => e.y)), l = (e + t) / 2, u = (n + c) / 2, d = new s(U(r.points), {
+			let e = Math.min(...r.points.map((e) => e.x)), t = Math.max(...r.points.map((e) => e.x)), n = Math.min(...r.points.map((e) => e.y)), c = Math.max(...r.points.map((e) => e.y)), l = (e + t) / 2, u = (n + c) / 2, d = U(r.points), f = new s(d, {
 				stroke: this.strokeColor,
 				strokeWidth: this.strokeWidth,
 				fill: i,
@@ -1062,10 +1100,10 @@ var W = class {
 				selectable: !1,
 				evented: !1
 			});
-			d.setPositionByOrigin({
+			f.setPositionByOrigin({
 				x: l,
 				y: u
-			}, "center", "center"), d.setCoords(), o = d;
+			}, "center", "center"), f.setCoords(), o = f;
 		} else o = new l(r.points, {
 			stroke: this.strokeColor,
 			strokeWidth: this.strokeWidth,
@@ -1095,18 +1133,10 @@ var W = class {
 			editable: !0,
 			cursorColor: this.strokeColor,
 			padding: 4
-		});
-		e.add(r), e.setActiveObject(r), r.enterEditing();
-		let i = !1;
+		}), i = !1;
 		r.on("editing:exited", () => {
-			if (!i) {
-				if (i = !0, !r.text || !r.text.trim()) {
-					e.remove(r), e.renderAll();
-					return;
-				}
-				this._attachMeta(r, "text", n), this._fireEvent("added", "text", r, n);
-			}
-		});
+			i || (i = !0, !r.text || !r.text.trim() ? (e.remove(r), e.renderAll()) : (this._attachMeta(r, "text", n), r._skipModified = !0, this._fireEvent("added", "text", r, n)));
+		}), e.add(r), e.setActiveObject(r), r.enterEditing();
 	}
 	_attachMeta(e, t, n) {
 		e.objectId = d(), e.createdBy = this.user.id, e.timestamp = Date.now(), e.actionType = "draw", e.tool = t, e.pageIndex = n, this._dirtyPages.add(n);
@@ -1125,7 +1155,7 @@ var W = class {
 			timestamp: n.timestamp ?? Date.now(),
 			pageIndex: r
 		};
-		n.objectId !== void 0 && (i.objectId = n.objectId), this.onEvent(i);
+		n.objectId !== void 0 && (i.objectId = n.objectId), t === "text" && n.text && (i.text = n.text, i.description = `Added text "${n.text}" on page ${r + 1}`), this.onEvent(i);
 	}
 }, G = class {
 	_container;
@@ -1140,7 +1170,7 @@ var W = class {
 		this._events = [], this._container && (this._container.innerHTML = "<div class=\"log-empty\">No activity yet</div>");
 	}
 	repopulate(e) {
-		this.clear(), !(!e || e.length === 0) && (this._events = [...e], [...e].reverse().forEach((e) => this._prependEntry(e)));
+		this.clear(), e && e.length !== 0 && (this._events = [...e], [...e].reverse().forEach((e) => this._prependEntry(e)));
 	}
 	getEvents() {
 		return [...this._events];
@@ -1152,16 +1182,17 @@ var W = class {
 		if (!this._container) return;
 		let t = document.createElement("div");
 		t.className = `log-entry action-${e.action}`, t.dataset.objectId = e.objectId ?? "";
-		let n = e.userName && e.userName.trim() ? e.userName : e.userId ? e.userId.slice(0, 8) + "…" : "????????", r = e.pageIndex === void 0 ? "" : `Page ${e.pageIndex + 1}`, i = e.action === "added" ? "＋" : "−";
+		let n = e.userName && e.userName.trim() ? e.userName : e.userId ? e.userId.slice(0, 8) + "…" : "????????", r = e.pageIndex === void 0 ? "" : `Page ${e.pageIndex + 1}`, i = e.action === "added" ? "＋" : "−", a = e.tool === "eraser" || e.tool === "erase-all" ? "erased" : e.action;
 		t.innerHTML = `
       <div class="log-entry-header">
-        <span class="log-badge ${e.action}">${i} ${e.action}</span>
+        <span class="log-badge ${e.action}">${i} ${a}</span>
         <span class="log-time">${p(e.timestamp)}</span>
       </div>
       <div class="log-detail">
         <span class="log-tool-name">${this._toolLabel(e.tool)}</span>
         <span class="log-page">${r}</span>
       </div>
+      ${e.text ? `<div class="log-text" style="margin:2px 0;font-style:italic;word-break:break-word;">“${this._safe(e.text)}”</div>` : ""}
       <div class="log-user" title="User ID: ${this._safe(e.userId ?? "")}">${this._safe(n)}</div>
     `, this._container.prepend(t);
 	}
@@ -1180,7 +1211,8 @@ var W = class {
 			text: "Text",
 			comment: "Comment",
 			image: "Image",
-			eraser: "Eraser"
+			eraser: "Eraser",
+			"erase-all": "Erase All"
 		}[e] ?? e ?? "Object";
 	}
 }, K = class {
@@ -1324,7 +1356,7 @@ var W = class {
 	}
 	_showPopup(e, t) {
 		if (!this._popup) return;
-		let n = e + 14, r = t - 140 / 2;
+		let n = e + 14, r = t - 70;
 		n + 288 > window.innerWidth - 12 && (n = e - 288 - 14), r + 140 > window.innerHeight - 12 && (r = window.innerHeight - 140 - 12), r < 12 && (r = 12), n < 12 && (n = 12), this._popup.style.left = Math.round(n) + "px", this._popup.style.top = Math.round(r) + "px", this._popup.style.display = "flex";
 		let i = this._popup.querySelector("textarea");
 		i && (i.value = "", i.focus());
@@ -1336,11 +1368,7 @@ var W = class {
 		if (!this._popup) return;
 		let e = this._popup.querySelector("textarea"), t = this._popup.querySelector("#btn-post-comment"), n = this._popup.querySelector("#btn-cancel-comment"), r = () => {
 			let t = e?.value?.trim();
-			if (!t || !this._pendingPlacement) {
-				this._hidePopup();
-				return;
-			}
-			this._submitComment(t);
+			!t || !this._pendingPlacement ? this._hidePopup() : this._submitComment(t);
 		};
 		t?.addEventListener("click", (e) => {
 			e.stopPropagation(), r();
@@ -1394,6 +1422,8 @@ var W = class {
 	_blobURL = null;
 	_mode = "edit";
 	_activePageIndex = 0;
+	_wheelHandler = null;
+	_scaleResolver = null;
 	_log;
 	_canvas;
 	_comments;
@@ -1426,7 +1456,7 @@ var W = class {
 			pagesContainerId: this._opts.pagesContainerId,
 			threadPanelId: this._opts.threadPanelId,
 			newPopupId: this._opts.newCommentPopupId
-		}), this._bindResize();
+		}), this._bindResize(), this._bindZoom();
 	}
 	_resolveUser(e) {
 		if (e.user) return e.user;
@@ -1496,6 +1526,22 @@ var W = class {
 	clearLog() {
 		this._log.clear();
 	}
+	getScale() {
+		return this._currentScale;
+	}
+	getPageSize(e = 0) {
+		let t = this._baseDims[e];
+		return t ? { ...t } : null;
+	}
+	async setScale(e) {
+		!Number.isFinite(e) || e <= 0 || !this._baseDims.length || await this._resizePages(e);
+	}
+	setScaleResolver(e) {
+		this._scaleResolver = e;
+	}
+	eraseAll() {
+		this._mode !== "view" && this._canvas.eraseAll();
+	}
 	insertImage(e) {
 		this._mode !== "view" && this._canvas.insertImage(e, this._activePageIndex);
 	}
@@ -1503,6 +1549,7 @@ var W = class {
 		this._mode !== "view" && (this._activePageIndex = t, this._canvas.insertImageAt(e, t, n, r));
 	}
 	save() {
+		this._canvas.commitTextEdits();
 		let e = this._canvas.toJSON().map(({ pageIndex: e, canvasJSON: t }) => ({
 			pageIndex: e,
 			pageHPts: this._getPdfDims(e).heightPts,
@@ -1558,7 +1605,8 @@ var W = class {
 		}
 	}
 	destroy() {
-		this._canvas.destroy(), this._renderer && this._renderer.destroy(), this._blobURL && URL.revokeObjectURL(this._blobURL), this._comments.clearAll();
+		let e = document.getElementById(this._opts.viewportId);
+		e && this._wheelHandler && e.removeEventListener("wheel", this._wheelHandler), this._wheelHandler = null, this._canvas.destroy(), this._renderer && this._renderer.destroy(), this._blobURL && URL.revokeObjectURL(this._blobURL), this._comments.clearAll();
 	}
 	async _load(e, t, n) {
 		this._showLoading(!0);
@@ -1651,31 +1699,57 @@ var W = class {
 		if (!e || typeof ResizeObserver > "u") return;
 		let t = f(async () => {
 			if (!this._renderer || !this._baseDims.length) return;
-			let e = this._viewerWidth(), t = this._renderer.getScale(e);
-			if (Math.abs(t - this._currentScale) < .01) return;
-			this._currentScale = t;
-			let n = document.getElementById(this._opts.pagesContainerId);
-			if (!n) return;
-			let r = [];
-			for (let e = 0; e < this._baseDims.length; e++) {
-				let { width: i, height: a } = this._baseDims[e], o = Math.round(i * t), s = Math.round(a * t), c = n.querySelector(`[data-page-index="${e}"]`);
-				if (!c) continue;
-				let l = c.querySelector(".page-layers");
-				if (l && (l.style.width = o + "px", l.style.height = s + "px"), this._docType === "pdf") {
-					let t = c.querySelector(".pdf-layer");
-					t && r.push({
-						i: e,
-						canvasEl: t
-					});
-				} else {
-					let e = c.querySelector(".image-layer");
-					e && (e.style.width = o + "px", e.style.height = s + "px");
-				}
-				this._canvas.resize(e, t);
-			}
-			r.length && this._renderer instanceof P && await Promise.all(r.map(({ i: e, canvasEl: n }) => this._renderer.renderPage(e, n, t))), this._comments.repositionAll(t);
+			let e = this._viewerWidth(), t = this._scaleResolver?.(e) ?? this._renderer.getScale(e);
+			Math.abs(t - this._currentScale) < .01 || await this._resizePages(t);
 		}, 250);
 		new ResizeObserver(t).observe(e);
+	}
+	_bindZoom() {
+		let e = document.getElementById(this._opts.viewportId);
+		e && (this._wheelHandler = (t) => {
+			t.ctrlKey && this._renderer && this._baseDims.length && (t.preventDefault(), this._zoomAt(t, e).catch((e) => {
+				console.error("[DocumentAnnotator] Failed to zoom document:", e);
+			}));
+		}, e.addEventListener("wheel", this._wheelHandler, { passive: !1 }));
+	}
+	async _zoomAt(e, t) {
+		let n = document.getElementById(this._opts.pagesContainerId), r = document.elementFromPoint(e.clientX, e.clientY)?.closest(".page-layers");
+		if (!n || !r || !n.contains(r)) return;
+		let i = this._currentScale, a = Math.max(.25, Math.min(4, i * Math.exp(-e.deltaY * .001)));
+		if (a === i) return;
+		let o = r.getBoundingClientRect(), s = (e.clientX - o.left) / i, c = (e.clientY - o.top) / i, l = this._resizePages(a), u = r.getBoundingClientRect();
+		t.scrollLeft += u.left + s * a - e.clientX, t.scrollTop += u.top + c * a - e.clientY;
+		try {
+			this._opts.onScaleChange?.(a);
+		} catch (e) {
+			console.error("[DocumentAnnotator] onScaleChange threw:", e);
+		}
+		await l;
+	}
+	async _resizePages(e) {
+		this._currentScale = e;
+		let t = document.getElementById(this._opts.pagesContainerId);
+		if (!t) return;
+		let n = [];
+		for (let r = 0; r < this._baseDims.length; r++) {
+			let { width: i, height: a } = this._baseDims[r], o = t.querySelector(`[data-page-index="${r}"]`);
+			if (!o) continue;
+			let s = o.querySelector(".page-layers");
+			if (s && (s.style.width = `${Math.round(i * e)}px`, s.style.height = `${Math.round(a * e)}px`), this._docType === "pdf") {
+				let e = o.querySelector(".pdf-layer");
+				e && n.push({
+					pageIndex: r,
+					canvasEl: e
+				});
+			} else {
+				let t = o.querySelector(".image-layer");
+				t && (t.style.width = `${Math.round(i * e)}px`, t.style.height = `${Math.round(a * e)}px`);
+			}
+			this._canvas.resize(r, e);
+		}
+		this._comments.repositionAll(e);
+		let r = this._renderer;
+		n.length && r instanceof P && await Promise.all(n.map(({ pageIndex: t, canvasEl: n }) => r.renderPage(t, n, e)));
 	}
 	_viewerWidth() {
 		let e = document.getElementById(this._opts.viewerPanelId);

@@ -1,6 +1,6 @@
 {
   "name": "xfdf-annotator",
-  "version": "0.1.5",
+  "version": "0.2.4",
   "description": "Lightweight browser-based PDF and image annotation library using the XFDF standard (ISO 19444-1)",
   "author": "",
   "license": "MIT",
@@ -50,13 +50,14 @@
   },
   "peerDependencies": {
     "fabric": "^7.3.1",
-    "pdfjs-dist": "^5.7.284"
+    "pdfjs-dist": "^6.4.299"
   },
   "devDependencies": {
-    "fabric": "^7.3.1",
-    "pdfjs-dist": "^5.7.284",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.10",
-    "vite-plugin-dts": "^5.0.0"
+    "@typescript/typescript6": "^6.0.2",
+    "fabric": "^7.4.0",
+    "pdfjs-dist": "^6.4.299",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vite-plugin-dts": "^5.1.2"
   }
 }

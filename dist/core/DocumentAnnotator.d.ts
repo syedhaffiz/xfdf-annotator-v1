@@ -15,6 +15,8 @@ export declare class DocumentAnnotator {
     private _blobURL;
     private _mode;
     private _activePageIndex;
+    private _wheelHandler;
+    private _scaleResolver;
     private _log;
     private _canvas;
     private _comments;
@@ -51,6 +53,22 @@ export declare class DocumentAnnotator {
     getDashArray(): number[];
     getLineStyle(): LineStyle;
     clearLog(): void;
+    /** Current page scale (display pixels per base unit). */
+    getScale(): number;
+    /** Base (unscaled) size of a page, or `null` when no document is loaded. */
+    getPageSize(pageIndex?: number): {
+        width: number;
+        height: number;
+    } | null;
+    /** Apply an explicit page scale to every page, canvas and comment pin. */
+    setScale(scale: number): Promise<void>;
+    /**
+     * Override how the scale is computed when the viewer panel resizes
+     * (e.g. fit-to-page × user zoom). Pass `null` to restore the default
+     * fit-to-width behaviour.
+     */
+    setScaleResolver(resolver: ((containerWidth: number) => number) | null): void;
+    eraseAll(): void;
     insertImage(file: File): void;
     insertImageAt(file: File, pageIndex: number, x: number, y: number): void;
     save(): string;
@@ -82,6 +100,9 @@ export declare class DocumentAnnotator {
     private _createPageWrapper;
     private _getPdfDims;
     private _bindResize;
+    private _bindZoom;
+    private _zoomAt;
+    private _resizePages;
     private _viewerWidth;
     private _showEmpty;
     private _showViewport;

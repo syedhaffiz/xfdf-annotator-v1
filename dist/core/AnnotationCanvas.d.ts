@@ -32,9 +32,13 @@ export declare class AnnotationCanvas {
     constructor({ user, onEvent, onCommentPlace }: AnnotationCanvasOptions);
     createCanvas(canvasEl: HTMLCanvasElement, baseW: number, baseH: number, pageIndex: number, scale: number): Canvas;
     resize(pageIndex: number, newScale: number): void;
+    private _outsidePointerHandler;
+    private _bindOutsideCommit;
     destroy(): void;
     setTool(tool: AnnotationTool): void;
     setMode(mode: AnnotationMode): void;
+    eraseAll(): void;
+    commitTextEdits(): void;
     setColor(color: string): void;
     setStrokeWidth(w: number): void;
     /** Hex fill colour for new fillable shapes (rect, ellipse, polygon, …). */

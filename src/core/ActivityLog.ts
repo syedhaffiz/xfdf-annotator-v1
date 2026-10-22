@@ -46,16 +46,18 @@ export class ActivityLog {
       : (ev.userId ? ev.userId.slice(0, 8) + '…' : '????????')
     const pageLabel = ev.pageIndex !== undefined ? `Page ${ev.pageIndex + 1}` : ''
     const icon      = ev.action === 'added' ? '＋' : '−'
+    const actionLabel = ev.tool === 'eraser' || ev.tool === 'erase-all' ? 'erased' : ev.action
 
     entry.innerHTML = `
       <div class="log-entry-header">
-        <span class="log-badge ${ev.action}">${icon} ${ev.action}</span>
+        <span class="log-badge ${ev.action}">${icon} ${actionLabel}</span>
         <span class="log-time">${formatTime(ev.timestamp)}</span>
       </div>
       <div class="log-detail">
         <span class="log-tool-name">${this._toolLabel(ev.tool)}</span>
         <span class="log-page">${pageLabel}</span>
       </div>
+      ${ev.text ? `<div class="log-text" style="margin:2px 0;font-style:italic;word-break:break-word;">“${this._safe(ev.text)}”</div>` : ''}
       <div class="log-user" title="User ID: ${this._safe(ev.userId ?? '')}">${this._safe(userLabel)}</div>
     `
     this._container.prepend(entry)
@@ -73,6 +75,7 @@ export class ActivityLog {
       freehand: 'Freehand', rectangle: 'Rectangle', circle: 'Ellipse',
       line: 'Line', arrow: 'Arrow', polygon: 'Polygon', text: 'Text',
       comment: 'Comment', image: 'Image', eraser: 'Eraser',
+      'erase-all': 'Erase All',
     }
     return map[tool] ?? tool ?? 'Object'
   }

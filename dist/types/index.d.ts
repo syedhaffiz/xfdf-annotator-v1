@@ -152,7 +152,8 @@ export interface ActivityEntry {
     /** 'added' | 'removed' — what happened to the annotation. */
     action: string;
     tool: AnnotationTool | 'eraser' | 'system' | string;
-    pageIndex: number;
+    /** 0-based page index; omitted for document-wide actions. */
+    pageIndex?: number;
     /** Unique annotation object identifier. */
     objectId?: string;
     /** User ID of the actor (alias for authorId). */
@@ -163,7 +164,8 @@ export interface ActivityEntry {
      * is no longer in the host application's directory.
      */
     userName?: string;
-    /** @deprecated use userId */
+    /** Text content for text annotations. */
+    text?: string;
     authorId?: string;
     timestamp: number;
 }
@@ -205,6 +207,8 @@ export interface DocumentAnnotatorOptions extends AnnotatorDOMOptions {
      * Listeners typically refresh `canUndo()` / `canRedo()` mirrors.
      */
     onChange?: AnnotationChangeHandler;
+    /** Fired after a user gesture (Ctrl+wheel) changes the page scale. */
+    onScaleChange?: (scale: number) => void;
     /**
      * Identity of the human authoring annotations and comments.
      *

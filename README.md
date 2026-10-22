@@ -307,6 +307,7 @@ Errors thrown inside the listener are caught and logged so a buggy listener can 
 ## Annotation Tools
 
 Pass a tool name to `annotator.setTool(...)`. The `key` column is the convention used by the Angular reference app — the library doesn't bind shortcuts itself.
+Hold **Ctrl** while scrolling over a document page to zoom around the pointer. Regular scrolling continues to navigate the document.
 
 | Key | Tool name | Description |
 |---|---|---|
@@ -404,6 +405,9 @@ const annotator = new DocumentAnnotator(options?);
 
   // Reactive hook fired after annotation events, undo, redo, restore, load.
   onChange:          () => { /* refresh framework signals */ },
+
+  // Fired after Ctrl+wheel zoom changes the page scale.
+  onScaleChange:     (scale) => { /* mirror zoom state */ },
 }
 ```
 
@@ -416,6 +420,7 @@ const annotator = new DocumentAnnotator(options?);
 | `setMode(mode: 'edit' \| 'view'): void` | Switch interaction mode |
 | `getMode(): 'edit' \| 'view'` | Current mode |
 | `setTool(tool: AnnotationTool): void` | Activate a drawing tool (no-op in view mode) |
+| `eraseAll(): void` | Remove all annotations from every page (no-op in view mode; comments are preserved) |
 | `setColor(color: string): void` | Stroke colour (CSS hex) |
 | `setStrokeWidth(width: number): void` | Stroke width in base units (px at scale 1) |
 | `setFillColor(color: string): void` | Fill colour for new fillable shapes (rect, ellipse, polygon, triangle) |
@@ -432,6 +437,10 @@ const annotator = new DocumentAnnotator(options?);
 | `canUndo(): boolean` | True when there is an earlier state to revert to |
 | `canRedo(): boolean` | True when there is a future state to re-apply |
 | `clearLog(): void` | Empty the activity log |
+| `getScale(): number` | Current page scale |
+| `setScale(scale: number): Promise<void>` | Apply an explicit scale to all pages, canvases and comment pins |
+| `getPageSize(pageIndex?: number): { width, height } \| null` | Base (unscaled) page size |
+| `setScaleResolver(fn \| null): void` | Override the scale computed when the viewer panel resizes (e.g. fit-to-page × user zoom) |
 | `destroy(): void` | Tear down all canvases and free resources |
 | `user: User` *(readonly)* | The active user `{ id, displayName }` |
 | `userId: string` *(readonly, deprecated — use `user.id`)* | Stable id of the active user |

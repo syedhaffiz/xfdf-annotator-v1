@@ -5,6 +5,7 @@ interface PdfDims {
     heightPts: number;
 }
 export declare class PDFRenderer implements IRenderer {
+    private _task;
     private _pdf;
     private _baseViewports;
     private _pdfPages;
